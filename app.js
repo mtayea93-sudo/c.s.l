@@ -80,6 +80,7 @@ function route() {
   if (!page || page === 'home') return renderHome();
   if (page === 'reception') return renderReception();
   if (page === 'casa') return renderCASA();
+  if (page === 'results') return renderResults();
   if (page === 'finance') return renderFinance();
   if (page === 'inventory') return renderInventory();
   if (page === 'settings') return renderSettings();
@@ -275,6 +276,7 @@ function renderHome() {
   const ses = session();
   const tiles = [
     ['reception', 'الاستقبال', 'تسجيل الحالات والفواتير وتحصيل المدفوعات', '🧾', '#1e5eff'],
+    ['results', 'النتائج', 'إدخال نتائج التحاليل — بتظلل العالي/الواطي تلقائياً + تقرير', '🧪', '#c2185b'],
     ['casa', 'CASA', 'تحليل السائل المنوي — الحالات تتسجل تلقائياً من الاستقبال', '🔬', '#0fa08c'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
@@ -497,6 +499,129 @@ function printInvoice(id) {
   <table><tr><th>#</th><th>التحليل</th><th>السعر</th></tr>
   ${v.tests.map((t, i) => { const tt = testById(t.testId); return `<tr><td>${i + 1}</td><td>${esc(tt?.name)}</td><td>${fmt(tt?.price)}</td></tr>`; }).join('')}</table>
   <div class="t">الإجمالي: ${fmt(v.tests.reduce((a, t) => a + (testById(t.testId)?.price || 0), 0))} ج.م — الخصم: ${fmt(v.discount)} ج.م — <b>المطلوب: ${fmt(visitTotal(v))} ج.م</b> — المدفوع: ${fmt(v.paidAmount || 0)} ج.م — المتبقي: ${fmt(visitTotal(v) - (v.paidAmount || 0))} ج.م</div>
+  <div class="sch">🕐 ${esc(DB.lab.schedule)}<br>${esc(h.footer)}</div>
+  <script>window.print()<\/script></body></html>`);
+  w.document.close();
+}
+
+/* ============================================================
+   النتائج — إدخال نتائج التحاليل (زي يسيّر: حالة ← تحليل ← نتيجة)
+   ============================================================ */
+let resQ = '';
+function renderResults() {
+  const q = resQ.trim().toLowerCase();
+  const vs = DB.visits.filter(v => {
+    if (!q) return v.date === today();
+    const p = patById(v.patientId);
+    return (p?.name || '').toLowerCase().includes(q) || String(v.invoiceNo).includes(q) || (p?.phone || '').includes(q);
+  }).slice(0, 60);
+  const pend = DB.visits.reduce((a, v) => a + v.tests.filter(t => t.status !== 'done').length, 0);
+  const done = DB.visits.reduce((a, v) => a + v.tests.filter(t => t.status === 'done').length, 0);
+  shell('النتائج — إدخال نتائج التحاليل', `
+  <div class="stats">
+    <div class="stat blue"><div class="v">${vs.length}</div><div class="l">حالة ظاهرة</div></div>
+    <div class="stat gold"><div class="v">${pend}</div><div class="l">تحليل منتظر نتيجة</div></div>
+    <div class="stat green"><div class="v">${done}</div><div class="l">تحليل بنتيجة</div></div>
+  </div>
+  <div class="card">
+    <input id="res-q" class="inp2" placeholder="🔍 بحث بالاسم أو رقم الفاتورة أو الموبايل… (فاضي = حالات اليوم)" style="width:100%" value="${esc(resQ)}" oninput="resSearch()">
+  </div>
+  <div id="res-list">${resListHtml(vs)}</div>`);
+}
+function resSearch() { resQ = $('#res-q').value; $('#res-list').innerHTML = resListHtml(DB.visits.filter(v => {
+  const q = resQ.trim().toLowerCase();
+  if (!q) return v.date === today();
+  const p = patById(v.patientId);
+  return (p?.name || '').toLowerCase().includes(q) || String(v.invoiceNo).includes(q) || (p?.phone || '').includes(q);
+}).slice(0, 60)); }
+function resListHtml(vs) {
+  if (!vs.length) return '<div class="card"><div class="empty">لا توجد حالات — سجّل حالة من الاستقبال الأول</div></div>';
+  return vs.map(v => { const p = patById(v.patientId);
+    return `<div class="card">
+      <h3 style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span>🧍 <b>${esc(p?.name)}</b> <span class="num" style="color:var(--mut)">فاتورة ${v.invoiceNo} — ${v.date}</span></span>
+        <span><button class="btn btn-g btn-s" onclick="resReport('${v.id}')">🖨️ تقرير</button></span></h3>
+      <table><tr><th>التحليل</th><th>الحالة</th><th></th></tr>
+      ${v.tests.map((t, i) => { const tt = testById(t.testId);
+        return `<tr><td style="font-weight:700">${esc(tt?.name)}</td>
+        <td>${t.status === 'done' ? '<span class="pill p-done">✅ بنتيجة</span>' : '<span class="pill p-unpaid">⏳ منتظر</span>'}</td>
+        <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل النتيجة' : 'إدخال النتيجة'}</button></td></tr>`;
+      }).join('')}</table>
+    </div>`; }).join('');
+}
+/* إدخال النتيجة: حقول التحليل من الكتالوج [اسم الحقل، الوحدة، من، إلى] */
+function resWork(visitId, idx) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v.tests[idx]; const tt = testById(t.testId);
+  const p = patById(v.patientId);
+  t.results = t.results || {};
+  const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+  modal(`<h3>🧪 ${esc(tt?.name)}</h3>
+    <div class="hint">الحالة: <b>${esc(p?.name)}</b> — فاتورة <span class="num">${v.invoiceNo}</span>${tt?.cat ? ` — القسم: ${esc(tt.cat)}` : ''}</div>
+    <div class="results-grid" style="margin-top:12px">
+    ${fields.map((f, i) => { const val = t.results[f[0]] ?? '';
+      return `<div class="res-field"><label>${esc(f[0])}${f[1] ? ` (${esc(f[1])})` : ''}</label>
+      <input id="rf-${i}" value="${esc(val)}" oninput="resFlagLive(${i},'${esc(f[2] || '')}','${esc(f[3] || '')}')">
+      ${f[2] || f[3] ? `<div class="rf">مرجع: ${esc(f[2])} - ${esc(f[3])} <span id="rfl-${i}"></span></div>` : ''}</div>`;
+    }).join('')}
+    </div>
+    <div class="field" style="margin-top:12px"><label>ملاحظات / تعليق الدكتور</label><input class="inp2" id="rf-notes" value="${esc(t.notes || '')}" style="width:100%"></div>
+    <div class="modal-actions">
+      <button class="btn btn-p" onclick="resSave('${visitId}',${idx})">💾 حفظ النتيجة</button>
+      <button class="btn btn-g" onclick="resSave('${visitId}',${idx},true)">💾 حفظ + تقرير</button>
+      <button class="btn btn-o" onclick="closeModal()">إغلاق</button>
+    </div>`);
+  fields.forEach((f, i) => { if (t.results[f[0]] != null && t.results[f[0]] !== '') resFlagLive(i, f[2] || '', f[3] || ''); });
+}
+/* تظليل تلقائي: أحمر لو عالي/واطي عن المرجع */
+function resFlagLive(i, low, hi) {
+  const el = $('#rf-' + i), fl = $('#rfl-' + i); if (!el || !fl) return;
+  const n = parseFloat(el.value);
+  if (el.value.trim() === '' || isNaN(n)) { fl.textContent = ''; el.style.borderColor = ''; return; }
+  const lo = parseFloat(low), hi2 = parseFloat(hi);
+  if (!isNaN(lo) && n < lo) { fl.textContent = '⬇ واطي'; fl.style.color = '#c62828'; el.style.borderColor = '#c62828'; }
+  else if (!isNaN(hi2) && n > hi2) { fl.textContent = '⬆ عالي'; fl.style.color = '#c62828'; el.style.borderColor = '#c62828'; }
+  else { fl.textContent = '✓'; fl.style.color = '#2e7d32'; el.style.borderColor = '#2e7d32'; }
+}
+function resSave(visitId, idx, report) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v.tests[idx]; const tt = testById(t.testId);
+  const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+  const r = {};
+  fields.forEach((f, i) => { const el = $('#rf-' + i); if (el) r[f[0]] = el.value.trim(); });
+  t.results = r; t.notes = $('#rf-notes').value.trim(); t.status = 'done'; t.doneAt = new Date().toISOString();
+  save(); closeModal(); toast('✅ تم حفظ نتيجة ' + (tt?.name || ''));
+  resSearch();
+  if (report) resReport(visitId);
+}
+/* تقرير نتائج قابل للطباعة */
+function resReport(visitId) {
+  const v = DB.visits.find(x => x.id === visitId); const p = patById(v.patientId); const h = DB.lab.header;
+  const doneTests = v.tests.filter(t => t.status === 'done');
+  if (!doneTests.length) return toast('⚠️ لسه مفيش نتائج محفوظة للحالة دي');
+  const flag = (val, low, hi) => {
+    const n = parseFloat(val); if (val === '' || isNaN(n)) return ['', ''];
+    const lo = parseFloat(low), hh = parseFloat(hi);
+    if (!isNaN(lo) && n < lo) return ['H', 'color:#c62828;font-weight:800'];
+    if (!isNaN(hh) && n > hh) return ['L', 'color:#c62828;font-weight:800'];
+    return ['', ''];
+  };
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تقرير ${v.invoiceNo}</title>
+  <style>body{font-family:Tahoma;font-size:13px;padding:20px}.hd{text-align:center;border-bottom:2px solid #0d1b3e;padding-bottom:10px;margin-bottom:14px}
+  table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #999;padding:7px;text-align:center}th{background:#0d1b3e;color:#fff}
+  .info{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin:8px 0}.sch{text-align:center;color:#666;font-size:12px;margin-top:16px}
+  .sig{display:flex;justify-content:space-between;margin-top:40px}.notes{font-size:12.5px;color:#444;margin-top:6px}</style></head><body>
+  <div class="hd">${DB.lab.logo ? `<img src="${DB.lab.logo}" style="max-height:70px">` : ''}
+    <h2 style="margin:0">${esc(h.title)}</h2><div>${esc(h.address)}</div><div class="num">${esc(h.phones)}</div></div>
+  <div class="info"><span>الاسم: <b>${esc(p?.name)}</b></span><span>السن: <b>${p?.age || '-'}</b></span><span>النوع: <b>${esc(p?.gender || '-')}</b></span>
+  <span>التاريخ: <b>${v.date}</b></span><span>فاتورة: <b class="num">${v.invoiceNo}</b></span>${v.doctor ? `<span>الدكتور: <b>${esc(v.doctor)}</b></span>` : ''}</div>
+  ${doneTests.map(t => { const tt = testById(t.testId);
+    const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+    return `<table><tr><th colspan="4" style="background:#1e5eff">${esc(tt?.name)}</th></tr>
+    <tr><th>القياس</th><th>النتيجة</th><th>الوحدة</th><th>المرجع</th></tr>
+    ${fields.map(f => { const val = (t.results || {})[f[0]] ?? ''; const [f2, st] = flag(val, f[2], f[3]);
+      return `<tr><td>${esc(f[0])}</td><td style="${st}">${esc(val)} ${f2 ? `<small>(${f2})</small>` : ''}</td><td>${esc(f[1] || '-')}</td><td class="num">${esc(f[2] || '')} - ${esc(f[3] || '')}</td></tr>`; }).join('')}
+    </table>${t.notes ? `<div class="notes">📝 ${esc(t.notes)}</div>` : ''}`; }).join('')}
+  <div class="sig"><span>توقيع الاخصائي: ..........................</span><span>توقيع الدكتور: ..........................</span></div>
   <div class="sch">🕐 ${esc(DB.lab.schedule)}<br>${esc(h.footer)}</div>
   <script>window.print()<\/script></body></html>`);
   w.document.close();
