@@ -186,6 +186,7 @@ function renderDistributor() {
         <td>${l.active ? '<span class="pill p-paid">نشط</span>' : '<span class="pill p-unpaid">موقوف</span>'}</td>
         <td>
           <button class="btn btn-o btn-s" onclick="distToggle('${l.id}')">${l.active ? 'إيقاف' : 'تفعيل'}</button>
+          <button class="btn btn-t btn-s" onclick="distUsers('${l.id}')">المستخدمون</button>
           <button class="btn btn-r btn-s" onclick="distDelete('${l.id}')">حذف</button>
         </td></tr>`).join('')}</table>` : '<div class="empty">لا توجد معملات بعد</div>'}
     </div>
@@ -204,6 +205,43 @@ function distCreate() {
   renderDistributor();
 }
 function distToggle(id) { const l = labById(id); l.active = !l.active; saveMeta(); renderDistributor(); }
+/* عرض/إدارة مستخدمي معمل من لوحة الموزّع */
+function distUsers(id) {
+  const l = labById(id); if (!l) return;
+  const raw = localStorage.getItem(labKey(id));
+  let db = null;
+  try { db = raw ? JSON.parse(raw) : null; } catch (e) { db = null; }
+  if (!db || !db.users) {
+    // محاولة سحبها من السحابة
+    if (typeof cloudFetchLabUsers === 'function') return cloudFetchLabUsers(id);
+    return toast('⚠️ بيانات المعمل مش متاحة على الجهاز ده — افتح المعمل مرة واحدة على أي جهاز عشان تتزامن');
+  }
+  renderDistUsers(id, db);
+}
+function renderDistUsers(id, db) {
+  const l = labById(id);
+  modal(`<h3>👥 مستخدمو معمل «${esc(l.name)}»</h3>
+    ${db.users.map(u => `<div class="chk-row" style="margin-bottom:8px">
+      <b>${esc(u.name)}</b> <span class="num" style="color:var(--mut)">${esc(u.user)}</span>
+      <span class="pill p-done">${esc(u.role)}</span>
+      <span class="sp"></span>
+      <button class="btn btn-o btn-s" onclick="distResetPass('${id}','${u.id}')">🔑 ريسيت كلمة السر (admin)</button>
+    </div>`).join('') || '<div class="empty">لا يوجد مستخدمون</div>'}
+    <div class="hint" style="margin-top:8px">البيانات الافتراضية لأي معمل جديد: <b class="num">admin / admin</b></div>
+    <div class="modal-actions"><button class="btn btn-o" onclick="closeModal()">إغلاق</button></div>`);
+}
+function distResetPass(labId, userId) {
+  const raw = localStorage.getItem(labKey(labId));
+  const db = raw ? JSON.parse(raw) : null;
+  if (!db) return toast('⚠️ البيانات مش متاحة');
+  const u = db.users.find(x => x.id === userId);
+  if (!u) return;
+  u.pass = 'admin';
+  localStorage.setItem(labKey(labId), JSON.stringify(db));
+  if (typeof cloudSchedulePushLab === 'function') cloudSchedulePushLab(labId, db);
+  toast('✅ اتعمل ريسيت — كلمة السر بقت admin');
+  renderDistUsers(labId, db);
+}
 function distDelete(id) {
   if (!confirm('هتحذف المعمل نهائياً؟')) return;
   META.labs = META.labs.filter(l => l.id !== id);
