@@ -71,6 +71,26 @@
     clearTimeout(CLOUD.labTimer);
     CLOUD.labTimer = setTimeout(cloudPushLab, 800);
   };
+  /* دفع بيانات معمل محدد (من لوحة الموزّع — مثلاً بعد ريسيت كلمة سر) */
+  window.cloudSchedulePushLab = function (labId, dbObj) {
+    if (!CLOUD.ok) return;
+    const payload = JSON.stringify(dbObj);
+    const at = new Date().toISOString();
+    CLOUD.db.collection('csl').doc(labId).set({ dataJson: payload, updatedAt: at }).catch(e => console.error('push lab:', e));
+  };
+  /* سحب مستخدمي معمل من السحابة لو مش موجودين محلياً */
+  window.cloudFetchLabUsers = function (labId) {
+    if (!CLOUD.ok) return toast('⚠️ السحابة مش متاحة');
+    toast('⏳ بجيب بيانات المعمل من السحابة…');
+    CLOUD.db.collection('csl').doc(labId).get().then(snap => {
+      if (!snap.exists) return toast('⚠️ المعمل لسه مااتفتحش على أي جهاز — مفيش نسخة سحابية');
+      const remote = snap.data();
+      const db = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
+      localStorage.setItem(labKey(labId), JSON.stringify(db));
+      renderDistUsers(labId, db);
+    }).catch(e => { console.error(e); toast('⚠️ تعذّر السحب من السحابة'); });
+  };
+
   window.cloudScheduleMetaPush = function () {
     if (!CLOUD.ok) return;
     clearTimeout(CLOUD.metaTimer);
