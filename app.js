@@ -49,6 +49,14 @@ function saveMeta() { localStorage.setItem(META_KEY, JSON.stringify(META)); if (
 function labById(id) { return META.labs.find(l => l.id === id); }
 function isActivated(id) { return localStorage.getItem(actKey(id)) === '1'; }
 function activate(id) { localStorage.setItem(actKey(id), '1'); }
+/* المعملات المفعلة على الجهاز ده — عشان الدخول من غير كود تاني */
+const MYLABS_KEY = 'csl_my_labs';
+function myLabs() { try { return JSON.parse(localStorage.getItem(MYLABS_KEY) || '[]'); } catch (e) { return []; } }
+function rememberLab(l) {
+  const list = myLabs().filter(x => x.id !== l.id);
+  list.unshift({ id: l.id, name: l.name });
+  localStorage.setItem(MYLABS_KEY, JSON.stringify(list.slice(0, 20)));
+}
 function save() { if (LABID) localStorage.setItem(labKey(LABID), JSON.stringify(DB)); if (typeof cloudSchedulePush === 'function') cloudSchedulePush(); }
 function loadLab(id) {
   LABID = id;
@@ -132,12 +140,23 @@ function loginTab(m) {
     <div class="field"><label>اسم المستخدم</label><input class="inp" id="lg-user"></div>
     <div class="field"><label>كلمة المرور</label><input class="inp" type="password" id="lg-pass"></div>
     <button class="btn btn-p" onclick="doSuperLogin()">دخول لوحة الموزّع ⬅</button>
-  ` : `
+  ` : (() => {
+    const mine = myLabs();
+    return `
+    ${mine.length ? `
+    <div class="field"><label>🏢 المعمل (مفعل على الجهاز ده)</label>
+      <select class="inp" id="lg-lab" onchange="lgLabChange()">
+        <option value="">— اختار المعمل —
+        ${mine.map(l => `<option value="${l.id}">${esc(l.name)}`).join('')}
+        <option value="__new">➕ معمل جديد (كود تفعيل)
+      </select></div>
+    <div class="field" id="lg-code-wrap" style="display:none"><label>كود التفعيل (أول مرة بس)</label><input class="inp num" id="lg-code"></div>
+    ` : `
+    <div class="field"><label>كود التفعيل (أول مرة بس — الجهاز هيتذكره)</label><input class="inp num" id="lg-code"></div>`}
     <div class="field"><label>اسم المستخدم</label><input class="inp" id="lg-user"></div>
     <div class="field"><label>كلمة المرور</label><input class="inp" type="password" id="lg-pass"></div>
-    <div class="field"><label>كود التفعيل (الجهاز)</label><input class="inp num" id="lg-code"></div>
-    <button class="btn btn-p" onclick="doLabLogin()">دخول ⬅</button>
-  `;
+    <button class="btn btn-p" onclick="doLabLogin()">دخول ⬅</button>`;
+  })();
 }
 function doSuperLogin() {
   const { user, pass } = { user: $('#lg-user').value.trim(), pass: $('#lg-pass').value };
@@ -145,14 +164,29 @@ function doSuperLogin() {
     setSession({ type: 'super', name: 'الموزّع' }); go(''); route();
   } else toast('⚠️ بيانات الموزّع غير صحيحة');
 }
+function lgLabChange() {
+  const v = $('#lg-lab')?.value;
+  const w = $('#lg-code-wrap'); if (!w) return;
+  w.style.display = v === '__new' ? '' : 'none';
+}
 function doLabLogin() {
-  const u = $('#lg-user').value.trim(), p = $('#lg-pass').value, c = $('#lg-code').value.trim().toLowerCase();
-  const lab = META.labs.find(l => l.code === c);
-  if (!lab) return toast('⚠️ كود التفعيل غير صحيح');
+  const u = $('#lg-user').value.trim(), p = $('#lg-pass').value;
+  let lab = null;
+  const sel = $('#lg-lab')?.value;
+  if (sel && sel !== '__new') {
+    lab = META.labs.find(l => l.id === sel);
+    if (!lab) return toast('⚠️ المعمل مش موجود في بيانات الموزّع — جرّب كود التفعيل');
+  } else {
+    const c = ($('#lg-code')?.value || '').trim().toLowerCase();
+    if (!c) return toast('⚠️ أدخل كود التفعيل');
+    lab = META.labs.find(l => l.code === c);
+    if (!lab) return toast('⚠️ كود التفعيل غير صحيح');
+  }
   if (!lab.active) return toast('⚠️ المعمل موقوف — تواصل مع الموزّع');
   const usr = (DB && LABID === lab.id ? DB.users : JSON.parse(localStorage.getItem(labKey(lab.id)) || 'null')?.users || []).find(x => x.user === u && x.pass === p);
   if (!usr) return toast('⚠️ اسم المستخدم أو كلمة المرور غير صحيحة');
   if (!isActivated(lab.id)) activate(lab.id);
+  rememberLab(lab);
   loadLab(lab.id);
   setSession({ type: 'lab', labId: lab.id, name: usr.name, role: usr.role, user: usr.user });
   go(''); route();
@@ -266,7 +300,7 @@ function doGoLab(id) {
   const raw = JSON.parse(localStorage.getItem(labKey(id)) || 'null');
   const usr = (raw?.users || []).find(x => x.user === $('#gl-user').value.trim() && x.pass === $('#gl-pass').value);
   if (!usr) return toast('⚠️ بيانات الدخول غير صحيحة');
-  activate(id); loadLab(id);
+  activate(id); rememberLab(lab); loadLab(id);
   setSession({ type: 'lab', labId: id, name: usr.name, role: usr.role, user: usr.user });
   closeModal(); go(''); route();
 }
@@ -277,7 +311,7 @@ function renderHome() {
   const tiles = [
     ['reception', 'الاستقبال', 'تسجيل الحالات والفواتير وتحصيل المدفوعات', '🧾', '#1e5eff'],
     ['results', 'النتائج', 'إدخال نتائج التحاليل — بتظلل العالي/الواطي تلقائياً + تقرير', '🧪', '#c2185b'],
-    ['casa', 'CASA', 'تحليل السائل المنوي — الحالات تتسجل تلقائياً من الاستقبال', '🔬', '#0fa08c'],
+    ['casa', 'CASA', 'تحليل السائل المنوي — بيُفتح على موقعنا casa.mtayea.com في تبويب جديد', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
     ['settings', 'الإعدادات', 'الأسعار والتحاليل واللوجو والترويسة والمستخدمين والشركات', '⚙️', '#54627d'],
@@ -301,10 +335,15 @@ function renderHome() {
       </div>
     </div>
     <div class="tiles">
-      ${tiles.map(t => `<div class="tile" onclick="go('${t[0]}')">
-        <div class="ic" style="background:${t[4]}22;color:${t[4]}">${t[3]}</div>
-        <div><h3>${t[1]}</h3><p>${t[2]}</p></div>
-        <span class="arr">←</span></div>`).join('')}
+      ${tiles.map(t => t[5]
+        ? `<a class="tile" href="${t[5]}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+            <div class="ic" style="background:${t[4]}22;color:${t[4]}">${t[3]}</div>
+            <div><h3>${t[1]}</h3><p>${t[2]}</p></div>
+            <span class="arr">↗</span></a>`
+        : `<div class="tile" onclick="go('${t[0]}')">
+            <div class="ic" style="background:${t[4]}22;color:${t[4]}">${t[3]}</div>
+            <div><h3>${t[1]}</h3><p>${t[2]}</p></div>
+            <span class="arr">←</span></div>`).join('')}
     </div>
   </div>`;
   updateSyncBadge();
@@ -509,31 +548,32 @@ function printInvoice(id) {
    ============================================================ */
 let resQ = '';
 function renderResults() {
-  const q = resQ.trim().toLowerCase();
-  const vs = DB.visits.filter(v => {
-    if (!q) return v.date === today();
-    const p = patById(v.patientId);
-    return (p?.name || '').toLowerCase().includes(q) || String(v.invoiceNo).includes(q) || (p?.phone || '').includes(q);
-  }).slice(0, 60);
   const pend = DB.visits.reduce((a, v) => a + v.tests.filter(t => t.status !== 'done').length, 0);
   const done = DB.visits.reduce((a, v) => a + v.tests.filter(t => t.status === 'done').length, 0);
+  // قائمة المرضى اللي ليهم زيارات
+  const pats = DB.patients.filter(p => DB.visits.some(v => v.patientId === p.id));
   shell('النتائج — إدخال نتائج التحاليل', `
   <div class="stats">
-    <div class="stat blue"><div class="v">${vs.length}</div><div class="l">حالة ظاهرة</div></div>
+    <div class="stat blue"><div class="v">${DB.visits.length}</div><div class="l">إجمالي الحالات</div></div>
     <div class="stat gold"><div class="v">${pend}</div><div class="l">تحليل منتظر نتيجة</div></div>
     <div class="stat green"><div class="v">${done}</div><div class="l">تحليل بنتيجة</div></div>
   </div>
-  <div class="card">
-    <input id="res-q" class="inp2" placeholder="🔍 بحث بالاسم أو رقم الفاتورة أو الموبايل… (فاضي = حالات اليوم)" style="width:100%" value="${esc(resQ)}" oninput="resSearch()">
+  <div class="card"><h3>١) اختار الحالة</h3>
+    <select id="res-pat" class="inp2" style="width:100%" onchange="resPickPat()">
+      <option value="">— اختار اسم المريض —
+      ${pats.map(p => { const n = DB.visits.filter(v => v.patientId === p.id).length;
+        const pendp = DB.visits.filter(v => v.patientId === p.id).reduce((a, v) => a + v.tests.filter(t => t.status !== 'done').length, 0);
+        return `<option value="${p.id}">${esc(p.name)} <span class="num">(${n} زيارة${pendp ? ` — ${pendp} منتظر` : ''})</span></option>`; }).join('')}
+    </select>
   </div>
-  <div id="res-list">${resListHtml(vs)}</div>`);
+  <div id="res-list"><div class="card"><div class="empty">👆 اختار اسم المريض من القائمة وهتظهر زياراته وتحاليله تحت</div></div></div>`);
 }
-function resSearch() { resQ = $('#res-q').value; $('#res-list').innerHTML = resListHtml(DB.visits.filter(v => {
-  const q = resQ.trim().toLowerCase();
-  if (!q) return v.date === today();
-  const p = patById(v.patientId);
-  return (p?.name || '').toLowerCase().includes(q) || String(v.invoiceNo).includes(q) || (p?.phone || '').includes(q);
-}).slice(0, 60)); }
+function resPickPat() {
+  const pid = $('#res-pat').value;
+  if (!pid) { $('#res-list').innerHTML = '<div class="card"><div class="empty">👆 اختار اسم المريض من القائمة وهتظهر زياراته وتحاليله تحت</div></div>'; return; }
+  const vs = DB.visits.filter(v => v.patientId === pid);
+  $('#res-list').innerHTML = resListHtml(vs);
+}
 function resListHtml(vs) {
   if (!vs.length) return '<div class="card"><div class="empty">لا توجد حالات — سجّل حالة من الاستقبال الأول</div></div>';
   return vs.map(v => { const p = patById(v.patientId);
@@ -589,7 +629,7 @@ function resSave(visitId, idx, report) {
   fields.forEach((f, i) => { const el = $('#rf-' + i); if (el) r[f[0]] = el.value.trim(); });
   t.results = r; t.notes = $('#rf-notes').value.trim(); t.status = 'done'; t.doneAt = new Date().toISOString();
   save(); closeModal(); toast('✅ تم حفظ نتيجة ' + (tt?.name || ''));
-  resSearch();
+  resPickPat();
   if (report) resReport(visitId);
 }
 /* تقرير نتائج قابل للطباعة */
