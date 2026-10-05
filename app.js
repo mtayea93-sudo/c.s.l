@@ -25,7 +25,7 @@ let META = null, DB = null, LABID = null;
 function seed() {
   const T = (id, name, cat, price, fields) => ({ id, name, cat, price, fields: fields || [] });
   const tests = [];
-  for (const r of (typeof YS_PANELS !== 'undefined' ? YS_PANELS : [])) tests.push(T('yp_' + tests.length, r.n, r.c, r.p, r.f || []));
+  for (const r of (typeof YS_PANELS !== 'undefined' ? YS_PANELS : [])) { const t = T('yp_' + tests.length, r.n, r.c, r.p, r.f || []); if (r.ar) t.ar = r.ar; tests.push(t); }
   for (const r of (typeof YS_TESTS !== 'undefined' ? YS_TESTS : [])) tests.push(T('yt_' + tests.length, r.n, r.c, r.p, r.f || []));
   if (!tests.some(t => /منوي/.test(t.name))) tests.push(T('casa_1', 'تحليل السائل المنوي (CASA)', 'السائل المنوي', 250, []));
   return {
@@ -398,10 +398,10 @@ function recPickPatient(id) {
 }
 function recTestSearch() {
   const q = ($('#rec-test-q')?.value || '').trim().toLowerCase();
-  const list = DB.tests.filter(t => !q || t.name.toLowerCase().includes(q)).slice(0, 60);
+  const list = DB.tests.filter(t => !q || t.name.toLowerCase().includes(q) || (t.ar || '').includes(q)).slice(0, 60);
   $('#rec-test-list').innerHTML = list.map(t => `
     <label class="chk-row"><input type="checkbox" ${recState.testIds.has(t.id) ? 'checked' : ''} onchange="recToggleTest('${t.id}')">
-      <span><b>${esc(t.name)}</b><br><small style="color:var(--mut)">${esc(t.cat || '')}</small></span>
+      <span><b>${esc(t.name)}</b>${t.ar ? ` <small style="color:#0fa08c">— ${esc(t.ar)}</small>` : ''}<br><small style="color:var(--mut)">${esc(t.cat || '')}</small></span>
       <span class="pr num">${fmt(t.price)} ج.م</span></label>`).join('') || '<div class="empty">لا نتائج</div>';
 }
 function recToggleTest(id) {
@@ -1141,13 +1141,23 @@ function renderSettings() {
   <div class="card"><h3>🏷️ قائمة الأسعار (${DB.tests.length} تحليل)</h3>
     <div class="toolbar">
       <input class="inp2" id="pr-q" placeholder="🔍 بحث…" style="flex:1;min-width:180px" oninput="stPriceSearch()">
+      <button class="btn btn-o btn-s" onclick="stRefreshCatalog()">🔄 تحديث الكتالوج من يسيّر</button>
     </div>
     <div id="pr-list" style="max-height:340px;overflow:auto"></div>
-    <div class="toolbar" style="margin-top:12px">
-      <input class="inp2" id="pr-new-name" placeholder="اسم تحليل جديد" style="flex:2;min-width:160px">
-      <input class="inp2 num" id="pr-new-price" type="number" placeholder="السعر" style="width:110px">
-      <input class="inp2" id="pr-new-cat" placeholder="القسم" style="width:120px">
-      <button class="btn btn-t btn-s" onclick="stAddTest()">➕ إضافة تحليل</button>
+    <div style="margin-top:12px;border-top:1px dashed #d5dcee;padding-top:12px">
+      <div class="toolbar">
+        <input class="inp2" id="pr-new-name" placeholder="اسم تحليل جديد" style="flex:2;min-width:160px">
+        <input class="inp2 num" id="pr-new-price" type="number" placeholder="السعر" style="width:110px">
+        <select class="inp2" id="pr-new-cat" style="width:150px">
+          ${['كيميا وبايوكيميا','هيماتولوجي','هرمونات','مناعة وفيروسات','أورام ماركرز','بول','سائل منوي','مزارع','PCR','أنسجة وهيستو','تخثر','فحوصات عامة ومزارع','عام'].map(c => `<option>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div class="hint" style="margin:8px 0 4px">📋 حقول النتيجة والمرجع <small style="color:var(--mut)">(زي يسيّر — سيبها فاضية لو التحليل نتيجة واحدة)</small></div>
+      <div id="pr-fields"></div>
+      <div class="toolbar">
+        <button class="btn btn-o btn-s" onclick="stAddFieldRow()">➕ إضافة قياس</button>
+        <button class="btn btn-t btn-s" onclick="stAddTest()">💾 حفظ التحليل</button>
+      </div>
     </div>
   </div>
   <div class="card"><h3>👥 المستخدمين</h3>
@@ -1177,6 +1187,55 @@ function renderSettings() {
     <label class="btn btn-o btn-s" style="margin-right:8px">⬆️ استيراد نسخة<input type="file" accept=".json" style="display:none" onchange="stImport(this)"></label>
   </div>`);
   stPriceSearch();
+  stNewFields = [];
+  stRenderFieldRows();
+}
+/* صفوف حقول المرجع لتحليل جديد */
+let stNewFields = [];
+function stRenderFieldRows() {
+  const w = $('#pr-fields'); if (!w) return;
+  w.innerHTML = stNewFields.map((f, i) => `<div class="toolbar" style="margin-bottom:6px">
+    <input class="inp2" placeholder="اسم القياس" value="${esc(f[0])}" style="flex:2;min-width:150px" oninput="stNewFields[${i}][0]=this.value">
+    <input class="inp2" placeholder="الوحدة" value="${esc(f[1])}" style="width:100px" oninput="stNewFields[${i}][1]=this.value">
+    <input class="inp2 num" placeholder="من" value="${esc(f[2])}" style="width:80px" oninput="stNewFields[${i}][2]=this.value">
+    <input class="inp2 num" placeholder="إلى" value="${esc(f[3])}" style="width:80px" oninput="stNewFields[${i}][3]=this.value">
+    <button class="btn btn-r btn-s" onclick="stNewFields.splice(${i},1);stRenderFieldRows()">✖</button>
+  </div>`).join('');
+}
+function stAddFieldRow() { stNewFields.push(['', '', '', '']); stRenderFieldRows(); }
+/* تعديل مرجع تحليل موجود */
+function stEditRef(id) {
+  const t = testById(id); if (!t) return;
+  const fields = (t.fields && t.fields.length) ? t.fields.map(f => [...f]) : [['', '', '', '']];
+  modal(`<h3>📋 مرجع: ${esc(t.name)}</h3>
+    <div id="ref-rows">${fields.map((f, i) => `<div class="toolbar" style="margin-bottom:6px">
+      <input class="inp2" placeholder="اسم القياس" value="${esc(f[0])}" style="flex:2;min-width:150px">
+      <input class="inp2" placeholder="الوحدة" value="${esc(f[1])}" style="width:100px">
+      <input class="inp2 num" placeholder="من" value="${esc(f[2])}" style="width:80px">
+      <input class="inp2 num" placeholder="إلى" value="${esc(f[3])}" style="width:80px">
+      <button class="btn btn-r btn-s" onclick="this.parentElement.remove()">✖</button>
+    </div>`).join('')}</div>
+    <div class="toolbar"><button class="btn btn-o btn-s" onclick="stAddRefRow()">➕ إضافة قياس</button></div>
+    <div class="modal-actions">
+      <button class="btn btn-p" onclick="stSaveRef('${id}')">💾 حفظ المرجع</button>
+      <button class="btn btn-o" onclick="closeModal()">إلغاء</button>
+    </div>`);
+}
+function stAddRefRow() {
+  $('#ref-rows').insertAdjacentHTML('beforeend', `<div class="toolbar" style="margin-bottom:6px">
+    <input class="inp2" placeholder="اسم القياس" style="flex:2;min-width:150px">
+    <input class="inp2" placeholder="الوحدة" style="width:100px">
+    <input class="inp2 num" placeholder="من" style="width:80px">
+    <input class="inp2 num" placeholder="إلى" style="width:80px">
+    <button class="btn btn-r btn-s" onclick="this.parentElement.remove()">✖</button>
+  </div>`);
+}
+function stSaveRef(id) {
+  const t = testById(id); if (!t) return;
+  const rows = [...document.querySelectorAll('#ref-rows .toolbar')];
+  const fields = rows.map(r => [...r.querySelectorAll('input')].map(i => i.value.trim())).filter(f => f[0]);
+  t.fields = fields;
+  save(); closeModal(); toast('✅ تم حفظ المرجع'); stPriceSearch();
 }
 function saveSuper() { META.superUser = { user: $('#sp-user').value.trim(), pass: $('#sp-pass').value }; saveMeta(); toast('✅ تم الحفظ'); }
 function stSaveLab() { DB.lab.name = $('#st-name').value.trim(); DB.lab.schedule = $('#st-schedule').value.trim(); save(); toast('✅ تم الحفظ'); renderSettings(); }
@@ -1189,19 +1248,37 @@ function stUploadLogo(inp) {
 }
 function stPriceSearch() {
   const q = ($('#pr-q')?.value || '').trim().toLowerCase();
-  const list = DB.tests.filter(t => !q || t.name.toLowerCase().includes(q)).slice(0, 80);
+  const list = DB.tests.filter(t => !q || t.name.toLowerCase().includes(q) || (t.ar || '').includes(q)).slice(0, 80);
   $('#pr-list').innerHTML = `<table><tr><th>التحليل</th><th>القسم</th><th>السعر</th><th></th></tr>
-  ${list.map(t => `<tr><td style="text-align:right">${esc(t.name)}</td><td>${esc(t.cat || '-')}</td>
+  ${list.map(t => `<tr><td style="text-align:right">${esc(t.name)} ${t.fields && t.fields.length ? `<small style="color:var(--mut)">(${t.fields.length} قياس)</small>` : ''}</td><td>${esc(t.cat || '-')}</td>
   <td><input class="inp2 num" type="number" value="${t.price}" style="width:90px;padding:5px 8px" onchange="stSetPrice('${t.id}', this.value)"></td>
-  <td><button class="btn btn-r btn-s" onclick="stDelTest('${t.id}')">🗑️</button></td></tr>`).join('')}</table>`;
+  <td><button class="btn btn-o btn-s" onclick="stEditRef('${t.id}')">📋 مرجع</button>
+  <button class="btn btn-r btn-s" onclick="stDelTest('${t.id}')">🗑️</button></td></tr>`).join('')}</table>`;
 }
 function stSetPrice(id, v) { const t = testById(id); t.price = +v || 0; save(); toast('✅ تم تحديث السعر'); }
+/* استيراد كتالوج يسيّر الجديد — بيحافظ على التحاليل اللي ضفتها بنفسك وأسعارك */
+function stRefreshCatalog() {
+  if (!confirm('هيتحدث الكتالوج من يسيّر بالبارتشنات والمراجع الجديدة. أسعار التحاليل الأساسية هترجع الافتراضية — تحاليلك الخاصة وأسعارها هتفضل زي ما هي. كمّل؟')) return;
+  const T = (id, name, cat, price, fields) => ({ id, name, cat, price, fields: fields || [] });
+  const fresh = [];
+  for (const r of (typeof YS_PANELS !== 'undefined' ? YS_PANELS : [])) { const t = T('yp_' + fresh.length, r.n, r.c, r.p, r.f || []); if (r.ar) t.ar = r.ar; fresh.push(t); }
+  for (const r of (typeof YS_TESTS !== 'undefined' ? YS_TESTS : [])) fresh.push(T('yt_' + fresh.length, r.n, r.c, r.p, r.f || []));
+  if (!fresh.some(t => /منوي/.test(t.name))) fresh.push(T('casa_1', 'تحليل السائل المنوي (CASA)', 'سائل منوي', 250, []));
+  const mine = DB.tests.filter(t => !/^yp_|^yt_|^casa_/.test(t.id));
+  const priceKeep = {};
+  DB.tests.forEach(t => { if (/^yp_|^yt_|^casa_/.test(t.id)) priceKeep[t.name] = t.price; });
+  fresh.forEach(t => { if (priceKeep[t.name]) t.price = priceKeep[t.name]; });
+  DB.tests = fresh.concat(mine);
+  save(); renderSettings(); toast('✅ الكتالوج اتحدث — ' + fresh.length + ' تحليل');
+}
 function stDelTest(id) { if (!confirm('حذف التحليل؟')) return; DB.tests = DB.tests.filter(t => t.id !== id); save(); stPriceSearch(); }
 function stAddTest() {
   const name = $('#pr-new-name').value.trim();
   if (!name) return toast('⚠️ أدخل الاسم');
-  DB.tests.push({ id: uid('t'), name, cat: $('#pr-new-cat').value.trim() || 'عام', price: +$('#pr-new-price').value || 0, fields: [] });
-  save(); $('#pr-new-name').value = ''; $('#pr-new-price').value = ''; stPriceSearch(); toast('✅ تمت الإضافة');
+  const fields = stNewFields.filter(f => f[0]);
+  DB.tests.push({ id: uid('t'), name, cat: $('#pr-new-cat').value.trim() || 'عام', price: +$('#pr-new-price').value || 0, fields });
+  save(); $('#pr-new-name').value = ''; $('#pr-new-price').value = '';
+  stNewFields = []; stRenderFieldRows(); stPriceSearch(); toast('✅ تمت الإضافة');
 }
 function stAddUser() {
   const name = $('#us-name').value.trim(), user = $('#us-user').value.trim(), pass = $('#us-pass').value;
