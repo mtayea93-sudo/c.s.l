@@ -1,10 +1,51 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
+<!-- 🔄 تحديث إجباري: أي جهاز يفتح نسخة قديمة بيتحدّث فوراً -->
+<script>
+(function () {
+  var V = 'csl-2026-10-07';
+  window.APP_VERSION = V;
+  function nukedReload() {
+    if (window.__nuking) return; window.__nuking = true;
+    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
+    if ('caches' in window) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+    setTimeout(function () { location.reload(); }, 300);
+  }
+  async function checkVersion() {
+    try {
+      var r = await fetch('version.json?ts=' + Date.now(), { cache: 'no-store' });
+      var j = await r.json();
+      if (j && j.v && j.v !== V) nukedReload();
+    } catch (e) {}
+  }
+  checkVersion();
+  setInterval(checkVersion, 45000);
+  if ('serviceWorker' in navigator) {
+    var hadController = !!navigator.serviceWorker.controller;
+    var refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || refreshing) return;
+      refreshing = true; location.reload();
+    });
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+    setInterval(function () {
+      navigator.serviceWorker.getRegistration().then(function (reg) { if (reg) reg.update(); });
+    }, 45000);
+  }
+})();
+</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CSL — نظام المعمل المتكامل</title>
 <link rel="icon" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0d1b3e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CSL">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 :root{--navy:#0d1b3e;--navy2:#122a5c;--blue:#1e5eff;--teal:#0fa08c;--gold:#e8a33d;--red:#c62828;--green:#2e7d32;--bg:#eef2f8;--card:#fff;--line:#e3e8f0;--txt:#1b2a4a;--mut:#7a8aa0}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -103,15 +144,66 @@ tr:nth-child(even) td{background:#f8fafd}
 .tabs5{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
 .tabs5 .btn.on{outline:3px solid #1e5eff44}
 .signature-host{position:fixed;bottom:14px;left:14px;z-index:300}
+.y-totalbar{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:4px}
+.yb{border-radius:10px;padding:8px 10px;text-align:center;color:#fff}
+.yb span{display:block;font-size:11.5px;opacity:.9}
+.yb b{font-size:15px}
+.b-total{background:#1e5eff}.b-disc{background:#e8a33d}.b-paid{background:#2e7d32}.b-rem{background:#c62828}
+.y-pat-banner{border:1.5px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:14px;background:#f8fafd}
+@media(max-width:700px){.y-totalbar{grid-template-columns:repeat(2,1fr)}}
+</style>
+
+<style>
+/* ===== تبويب «المعمل» — نظام يسير داخل CSL ===== */
+.ly-tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.ly-tab{border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:9px 18px;font-weight:800;font-size:14px;cursor:pointer;color:var(--navy)}
+.ly-tab.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+.ly-tabs.small .ly-tab{padding:6px 12px;font-size:12.5px}
+.ly-rec-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.ly-res-grid{display:grid;grid-template-columns:340px 1fr;gap:14px}
+.ly-set-grid{display:grid;grid-template-columns:380px 1fr;gap:14px}
+.ly-testlist{border:1px solid var(--line);border-radius:10px;overflow:auto;max-height:300px;background:#fff}
+.ly-testlist.tall{max-height:520px}
+.ly-testrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #eef1f7;cursor:pointer;font-size:13.5px}
+.ly-testrow:hover{background:#f4f7ff}
+.ly-testrow.sel{background:#e3edff;box-shadow:inset 3px 0 0 var(--blue)}
+.ly-tr-name{flex:1}
+.ly-tr-name .en{display:block;font-size:11.5px;color:#8a94ab;direction:ltr;text-align:right}
+.ly-selrow{display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px dashed #dde3ef;font-size:13px}
+.ly-selrow span{flex:1}
+.ly-ybinp{width:80px;background:rgba(255,255,255,.25);border:none;border-radius:6px;color:#fff;font-weight:800;text-align:center;font-size:14px;padding:2px 4px}
+.ly-ybinp:focus{outline:2px solid #fff}
+.ly-resrow{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px dashed #d5dbe8;font-size:13.5px}
+.ly-res-name{width:44%}
+.ly-res-inp{width:31%;display:flex;align-items:center;gap:6px}
+.ly-res-inp .inp2{padding:5px 8px}
+.ly-flag{min-width:38px;font-size:12px}
+.ly-resrow .rf{width:25%;color:#444;font-size:12.5px}
+.ly-table{width:100%;border-collapse:collapse;font-size:12px}
+.ly-table th{background:#f0f4fb;padding:5px 4px;border-bottom:1.5px solid var(--line);text-align:right}
+.ly-table td{padding:3px 2px;border-bottom:1px solid #eef1f7;vertical-align:middle}
+.ly-table .inp2{padding:4px 6px;font-size:12px}
+@media(max-width:900px){.ly-rec-grid,.ly-res-grid,.ly-set-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="catalog.js"></script>
+<script src="yaseer-data.js"></script>
+<script src="security.js"></script>
 <script src="cloud.js"></script>
 <script src="app.js"></script>
+<script src="labops.js"></script>
 <script src="https://m-tayea.mtayea.com/signature/mtayea-signature.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW:', err));
+  });
+}
+</script>
 </body>
 </html>

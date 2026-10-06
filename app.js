@@ -34,7 +34,7 @@ function seed() {
     treasury: { days: {}, balances: [] },
     companies: [], companyDebts: [],
     inventory: [], invLog: [],
-    users: [{ id: 'u1', name: 'المدير', user: 'admin', pass: 'admin', role: 'أدمن' }],
+    users: [{ id: 'u1', name: 'المدير', user: 'admin', pass: 'mhmd@1993', role: 'أدمن' }],
     seq: { patient: 1, visit: 1001, invoice: 5001 },
     casaQueue: [],
   };
@@ -43,7 +43,8 @@ function seed() {
 /* ---------- meta / labs ---------- */
 function loadMeta() {
   try { META = JSON.parse(localStorage.getItem(META_KEY)); } catch (e) { META = null; }
-  if (!META || !META.labs) { META = { superUser: { user: 'mt', pass: 'mozo' }, labs: [] }; saveMeta(); }
+  if (!META || !META.labs) { META = { superUser: { user: 'mt', pass: 'mhmd@1993' }, labs: [] }; saveMeta(); }
+  else if (META.superUser && META.superUser.pass === 'mozo') { META.superUser.pass = 'mhmd@1993'; saveMeta(); }
 }
 function saveMeta() { localStorage.setItem(META_KEY, JSON.stringify(META)); if (typeof cloudScheduleMetaPush === 'function') cloudScheduleMetaPush(); }
 function labById(id) { return META.labs.find(l => l.id === id); }
@@ -68,7 +69,7 @@ function loadLab(id) {
 /* ---------- session ---------- */
 function session() { try { return JSON.parse(sessionStorage.getItem(SES)); } catch (e) { return null; } }
 function setSession(s) { sessionStorage.setItem(SES, JSON.stringify(s)); }
-function logout() { sessionStorage.removeItem(SES); location.hash = ''; route(); }
+function logout() { sessionStorage.removeItem(SES); if (typeof cloudSignOut === 'function') cloudSignOut(); location.hash = ''; route(); }
 
 /* ---------- router ---------- */
 function go(p) { location.hash = '#/' + p; }
@@ -78,6 +79,10 @@ function route() {
   if (page0 === 'go' && arg0) { loadMeta(); return goLab(arg0); }
   const ses = session();
   if (!ses) { LABID = null; return renderLogin(); }
+  if (typeof sessionTampered === 'function' && sessionTampered()) {
+    sessionStorage.removeItem(SES); LABID = null;
+    return renderLogin();
+  }
   if (ses.type === 'super') {
     const [page] = h.split('/');
     if (page === 'settings') return renderSettings();
@@ -92,6 +97,7 @@ function route() {
   if (page === 'finance') return renderFinance();
   if (page === 'inventory') return renderInventory();
   if (page === 'settings') return renderSettings();
+  if (page === 'labops') return renderLabops(arg);
   renderHome();
 }
 window.addEventListener('hashchange', route);
@@ -169,7 +175,7 @@ function lgLabChange() {
   const w = $('#lg-code-wrap'); if (!w) return;
   w.style.display = v === '__new' ? '' : 'none';
 }
-function doLabLogin() {
+async function doLabLogin() {
   const u = $('#lg-user').value.trim(), p = $('#lg-pass').value;
   let lab = null;
   const sel = $('#lg-lab')?.value;
@@ -183,12 +189,22 @@ function doLabLogin() {
     if (!lab) return toast('⚠️ كود التفعيل غير صحيح');
   }
   if (!lab.active) return toast('⚠️ المعمل موقوف — تواصل مع الموزّع');
-  const usr = (DB && LABID === lab.id ? DB.users : JSON.parse(localStorage.getItem(labKey(lab.id)) || 'null')?.users || []).find(x => x.user === u && x.pass === p);
-  if (!usr) return toast('⚠️ اسم المستخدم أو كلمة المرور غير صحيحة');
+  const dbRaw = (DB && LABID === lab.id) ? DB : JSON.parse(localStorage.getItem(labKey(lab.id)) || 'null');
+  const usr = (dbRaw?.users || []).find(x => x.user === u);
+  const v = await verifyPass(usr, p);
+  if (!v.ok) return toast('⚠️ اسم المستخدم أو كلمة المرور غير صحيحة');
+  if (v.upgraded) {
+    usr.salt = v.rec.salt; usr.pass = v.rec.pass;
+    localStorage.setItem(labKey(lab.id), JSON.stringify(dbRaw));
+    if (DB && LABID === lab.id) DB = dbRaw;
+    if (typeof cloudSchedulePushLab === 'function') cloudSchedulePushLab(lab.id, dbRaw);
+  }
   if (!isActivated(lab.id)) activate(lab.id);
   rememberLab(lab);
   loadLab(lab.id);
-  setSession({ type: 'lab', labId: lab.id, name: usr.name, role: usr.role, user: usr.user });
+  const sess = { type: 'lab', labId: lab.id, name: usr.name, role: usr.role, user: usr.user };
+  sess.sig = signSession(sess);
+  setSession(sess);
   go(''); route();
 }
 
@@ -209,6 +225,7 @@ function renderDistributor() {
     <div class="card"><h3>➕ إنشاء معمل جديد</h3>
       <div class="toolbar">
         <input class="inp2" id="dl-name" placeholder="اسم المعمل" style="flex:1;min-width:220px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;white-space:nowrap;cursor:pointer"><input type="checkbox" id="dl-casa"> تفعيل CASA معاه (كود واحد)</label>
         <button class="btn btn-t" onclick="distCreate()">إنشاء معمل + كود تفعيل</button>
       </div>
     </div>
@@ -218,9 +235,10 @@ function renderDistributor() {
         <td style="font-weight:700">${esc(l.name)}</td>
         <td class="num"><b>${l.code}</b></td>
         <td class="num" style="font-size:11.5px">csl.mtayea.com/#/go/${l.id}</td>
-        <td>${l.active ? '<span class="pill p-paid">نشط</span>' : '<span class="pill p-unpaid">موقوف</span>'}</td>
+        <td>${l.active ? '<span class="pill p-paid">نشط</span>' : '<span class="pill p-unpaid">موقوف</span>'} ${l.casa ? '<span class="pill p-paid">CASA ✓</span>' : '<span class="pill p-unpaid">CASA ✗</span>'}</td>
         <td>
           <button class="btn btn-o btn-s" onclick="distToggle('${l.id}')">${l.active ? 'إيقاف' : 'تفعيل'}</button>
+          <button class="btn btn-t btn-s" onclick="distCasa('${l.id}')">${l.casa ? 'إيقاف CASA' : 'تفعيل CASA'}</button>
           <button class="btn btn-t btn-s" onclick="distUsers('${l.id}')">المستخدمون</button>
           <button class="btn btn-r btn-s" onclick="distDelete('${l.id}')">حذف</button>
         </td></tr>`).join('')}</table>` : '<div class="empty">لا توجد معملات بعد</div>'}
@@ -232,7 +250,7 @@ function distCreate() {
   const name = $('#dl-name').value.trim();
   if (!name) return toast('⚠️ أدخل اسم المعمل');
   const id = 'lab_' + Math.random().toString(36).slice(2, 8);
-  META.labs.push({ id, name, code: mkCode(), active: true, createdAt: today() });
+  META.labs.push({ id, name, code: mkCode(), active: true, casa: !!($('#dl-casa') && $('#dl-casa').checked), createdAt: today() });
   saveMeta();
   const fresh = seed(); fresh.lab.name = name;
   localStorage.setItem(labKey(id), JSON.stringify(fresh));
@@ -240,6 +258,7 @@ function distCreate() {
   renderDistributor();
 }
 function distToggle(id) { const l = labById(id); l.active = !l.active; saveMeta(); renderDistributor(); }
+function distCasa(id) { const l = labById(id); l.casa = !l.casa; saveMeta(); renderDistributor(); toast(l.casa ? '✓ CASA مفعّل للمعمل ده' : '✗ CASA اتوقف للمعمل ده'); }
 /* عرض/إدارة مستخدمي معمل من لوحة الموزّع */
 function distUsers(id) {
   const l = labById(id); if (!l) return;
@@ -262,19 +281,20 @@ function renderDistUsers(id, db) {
       <span class="sp"></span>
       <button class="btn btn-o btn-s" onclick="distResetPass('${id}','${u.id}')">🔑 ريسيت كلمة السر (admin)</button>
     </div>`).join('') || '<div class="empty">لا يوجد مستخدمون</div>'}
-    <div class="hint" style="margin-top:8px">البيانات الافتراضية لأي معمل جديد: <b class="num">admin / admin</b></div>
+    <div class="hint" style="margin-top:8px">البيانات الافتراضية لأي معمل جديد: <b class="num">admin / mhmd@1993</b></div>
     <div class="modal-actions"><button class="btn btn-o" onclick="closeModal()">إغلاق</button></div>`);
 }
-function distResetPass(labId, userId) {
+async function distResetPass(labId, userId) {
   const raw = localStorage.getItem(labKey(labId));
   const db = raw ? JSON.parse(raw) : null;
   if (!db) return toast('⚠️ البيانات مش متاحة');
   const u = db.users.find(x => x.id === userId);
   if (!u) return;
-  u.pass = 'admin';
+  const hp = await hashNewPass('mhmd@1993');
+  u.salt = hp.salt; u.pass = hp.pass;
   localStorage.setItem(labKey(labId), JSON.stringify(db));
   if (typeof cloudSchedulePushLab === 'function') cloudSchedulePushLab(labId, db);
-  toast('✅ اتعمل ريسيت — كلمة السر بقت admin');
+  toast('✅ اتعمل ريسيت — كلمة السر بقت mhmd@1993');
   renderDistUsers(labId, db);
 }
 function distDelete(id) {
@@ -294,24 +314,32 @@ function goLab(id) {
       <button class="btn btn-o" onclick="closeModal()">إلغاء</button>
     </div>`);
 }
-function doGoLab(id) {
+async function doGoLab(id) {
   const lab = labById(id);
   if (!lab.active) return toast('⚠️ المعمل موقوف');
   const raw = JSON.parse(localStorage.getItem(labKey(id)) || 'null');
-  const usr = (raw?.users || []).find(x => x.user === $('#gl-user').value.trim() && x.pass === $('#gl-pass').value);
-  if (!usr) return toast('⚠️ بيانات الدخول غير صحيحة');
+  const usr = (raw?.users || []).find(x => x.user === $('#gl-user').value.trim());
+  const v = await verifyPass(usr, $('#gl-pass').value);
+  if (!v.ok) return toast('⚠️ بيانات الدخول غير صحيحة');
+  if (v.upgraded) {
+    usr.salt = v.rec.salt; usr.pass = v.rec.pass;
+    localStorage.setItem(labKey(id), JSON.stringify(raw));
+    if (typeof cloudSchedulePushLab === 'function') cloudSchedulePushLab(id, raw);
+  }
   activate(id); rememberLab(lab); loadLab(id);
-  setSession({ type: 'lab', labId: id, name: usr.name, role: usr.role, user: usr.user });
+  const sess = { type: 'lab', labId: id, name: usr.name, role: usr.role, user: usr.user };
+  sess.sig = signSession(sess);
+  setSession(sess);
   closeModal(); go(''); route();
 }
 
 /* ---------- home: التبويبات الخمسة ---------- */
 function renderHome() {
   const ses = session();
+  const casaOn = !!labById(LABID)?.casa;
   const tiles = [
-    ['reception', 'الاستقبال', 'تسجيل الحالات والفواتير وتحصيل المدفوعات', '🧾', '#1e5eff'],
-    ['results', 'النتائج', 'إدخال نتائج التحاليل — بتظلل العالي/الواطي تلقائياً + تقرير', '🧪', '#c2185b'],
-    ['casa', 'CASA', 'تحليل السائل المنوي — بيُفتح على موقعنا casa.mtayea.com في تبويب جديد', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
+    ['labops', 'المعمل', 'استقبال + نتائج + إعدادات (تحاليل/باراميترات/عينات) — بنظام يسير', '🏥', '#0b5bd3'],
+    ['casa', 'CASA', casaOn ? 'تحليل السائل المنوي — مفعّل ✓ بيفتح على موقعنا casa.mtayea.com في تبويب جديد' : 'تحليل السائل المنوي — غير مفعّل للمعمل ده، هيُفتح موقع CASA عادي وتقدر تفعّله هناك', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
     ['settings', 'الإعدادات', 'الأسعار والتحاليل واللوجو والترويسة والمستخدمين والشركات', '⚙️', '#54627d'],
@@ -380,7 +408,13 @@ function renderReception() {
     <div id="rec-chosen" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px"></div>
   </div>
   <div class="card"><h3>٣) حساب الحالة</h3>
-    <div class="grid3">
+    <div class="y-totalbar" id="rec-bar">
+      <div class="yb b-total"><span>الإجمالي</span><b id="yb-total" class="num">0</b></div>
+      <div class="yb b-disc"><span>الخصم</span><b id="yb-disc" class="num">0</b></div>
+      <div class="yb b-paid"><span>المدفوع</span><b id="yb-paid" class="num">0</b></div>
+      <div class="yb b-rem"><span>المتبقي</span><b id="yb-rem" class="num">0</b></div>
+    </div>
+    <div class="grid3" style="margin-top:12px">
       <div class="field"><label>الإجمالي</label><input class="inp2" id="rec-total" readonly style="width:100%;font-weight:800"></div>
       <div class="field"><label>نوع الخصم</label><select class="inp2" id="rec-disc-type" style="width:100%" onchange="recCalc()">
         <option value="amount">مبلغ ثابت</option><option value="percent">نسبة %</option></select></div>
@@ -411,21 +445,50 @@ function recSearch() {
 function recNewPatient() {
   const q = $('#rec-search').value.trim();
   modal(`<h3>تسجيل حالة جديدة</h3>
-    <div class="grid2">
-      <div class="field"><label>الاسم بالكامل *</label><input class="inp2" id="np-name" value="${esc(q)}" style="width:100%"></div>
-      <div class="field"><label>السن *</label><input class="inp2 num" id="np-age" type="number" min="0" max="120" style="width:100%"></div>
+    <div class="grid3">
+      <div class="field"><label>اللقب</label><select class="inp2" id="np-title" style="width:100%"><option value="">—</option><option>السيد</option><option>السيدة</option><option>الطفل</option><option>الطفلة</option></select></div>
+      <div class="field" style="grid-column:span 2"><label>الاسم بالكامل *</label><input class="inp2" id="np-name" value="${esc(q)}" style="width:100%"></div>
       <div class="field"><label>النوع</label><select class="inp2" id="np-gender" style="width:100%"><option>ذكر</option><option>أنثى</option></select></div>
+      <div class="field"><label>سن — عام *</label><input class="inp2 num" id="np-age" type="number" min="0" max="120" style="width:100%" onchange="npAgeToDob()"></div>
+      <div class="field"><label>شهر</label><input class="inp2 num" id="np-agemo" type="number" min="0" max="11" value="0" style="width:100%"></div>
+      <div class="field"><label>يوم</label><input class="inp2 num" id="np-aged" type="number" min="0" max="30" value="0" style="width:100%"></div>
+      <div class="field"><label>تاريخ الميلاد</label><input class="inp2" id="np-dob" type="date" style="width:100%" onchange="npDobToAge()"></div>
+      <div class="field"><label>الجنسية</label><input class="inp2" id="np-nat" value="مصري" style="width:100%"></div>
+      <div class="field"><label>رقم وطني</label><input class="inp2 num" id="np-nid" style="width:100%"></div>
       <div class="field"><label>رقم التليفون</label><input class="inp2 num" id="np-phone" style="width:100%"></div>
+      <div class="field" style="grid-column:span 2"><label>العنوان</label><input class="inp2" id="np-addr" style="width:100%"></div>
+      <div class="field"><label>رقم إحالة</label><input class="inp2 num" id="np-refno" style="width:100%"></div>
+      <div class="field"><label>لقب الإحالة</label><input class="inp2" id="np-reftitle" style="width:100%"></div>
+      <div class="field"><label>إحالة</label><select class="inp2" id="np-referrer" style="width:100%"><option>Self referral</option><option>طبيب</option><option>شركة</option></select></div>
+      <div class="field"><label>خطة الأسعار</label><select class="inp2" id="np-plan" style="width:100%"><option>السعر الأساسي</option></select></div>
     </div>
     <div class="modal-actions">
       <button class="btn btn-p" onclick="recSavePatient()">💾 حفظ</button>
       <button class="btn btn-o" onclick="closeModal()">إلغاء</button>
     </div>`);
 }
+/* سن ↔ تاريخ ميلاد (زي يسير) */
+function npAgeToDob() {
+  const y = +$('#np-age').value || 0; if (!y) return;
+  const n = new Date(); const d = new Date(n.getFullYear() - y, n.getMonth(), n.getDate());
+  $('#np-dob').value = d.toISOString().slice(0, 10);
+}
+function npDobToAge() {
+  const dob = $('#np-dob').value; if (!dob) return;
+  const d = new Date(dob), n = new Date();
+  let y = n.getFullYear() - d.getFullYear(), m = n.getMonth() - d.getMonth(), dd = n.getDate() - d.getDate();
+  if (dd < 0) { m--; dd += 30; } if (m < 0) { y--; m += 12; }
+  $('#np-age').value = y; $('#np-agemo').value = m; $('#np-aged').value = dd;
+}
 function recSavePatient() {
   const name = $('#np-name').value.trim(), age = +$('#np-age').value;
   if (!name || !age) return toast('⚠️ الاسم والسن مطلوبان');
-  const p = { id: uid('p'), name, age, gender: $('#np-gender').value, phone: $('#np-phone').value.trim(), code: 'P-' + String(DB.seq.patient++).padStart(4, '0'), createdAt: today() };
+  const p = { id: uid('p'), name, age, gender: $('#np-gender').value, phone: $('#np-phone').value.trim(),
+    code: 'P-' + String(DB.seq.patient++).padStart(4, '0'), createdAt: today(),
+    title: $('#np-title')?.value || '', ageMonths: +$('#np-agemo')?.value || 0, ageDays: +$('#np-aged')?.value || 0,
+    dob: $('#np-dob')?.value || '', nationality: $('#np-nat')?.value.trim() || '', nationalId: $('#np-nid')?.value.trim() || '',
+    address: $('#np-addr')?.value.trim() || '', refNo: $('#np-refno')?.value.trim() || '', refTitle: $('#np-reftitle')?.value.trim() || '',
+    referrer: $('#np-referrer')?.value || '', pricePlan: $('#np-plan')?.value || '' };
   DB.patients.push(p); save(); closeModal(); recPickPatient(p.id);
   toast('✅ تم تسجيل الحالة ' + p.code);
 }
@@ -433,7 +496,7 @@ function recPickPatient(id) {
   recState.patientId = id;
   const p = patById(id);
   $('#rec-pat-results').innerHTML = '';
-  $('#rec-pat-chosen').innerHTML = `<div class="hint ok">✅ الحالة المختارة: <b>${esc(p.name)}</b> — <span class="num">${esc(p.code)}</span> — ${p.age} سنة — ${esc(p.phone || 'بدون تليفون')}</div>`;
+  $('#rec-pat-chosen').innerHTML = `<div class="hint ok">✅ الحالة المختارة: <b>${esc(p.title ? p.title + ' ' : '')}${esc(p.name)}</b> — <span class="num">${esc(p.code)}</span> — ${p.age} سنة — ${esc(p.gender || '')} — ${esc(p.phone || 'بدون تليفون')}</div>`;
 }
 function recTestSearch() {
   const q = ($('#rec-test-q')?.value || '').trim().toLowerCase();
@@ -461,6 +524,7 @@ function recCalc() {
   const paid = Math.min(net, +$('#rec-paid').value || 0);
   $('#rec-net').value = fmt(net) + ' ج.م';
   $('#rec-remain').value = fmt(net - paid) + ' ج.م';
+  const bt = $('#yb-total'); if (bt) { bt.textContent = fmt(gross); $('#yb-disc').textContent = fmt(disc); $('#yb-paid').textContent = fmt(paid); $('#yb-rem').textContent = fmt(net - paid); }
 }
 function recSave(printIt) {
   if (!recState.patientId) return toast('⚠️ اختر الحالة أولاً');
@@ -596,12 +660,15 @@ function resWork(visitId, idx) {
   t.results = t.results || {};
   const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
   modal(`<h3>🧪 ${esc(tt?.name)}</h3>
-    <div class="hint">الحالة: <b>${esc(p?.name)}</b> — فاتورة <span class="num">${v.invoiceNo}</span>${tt?.cat ? ` — القسم: ${esc(tt.cat)}` : ''}</div>
+    <div class="y-pat-banner">
+      <div><b>${esc(p?.title ? p.title + ' ' : '')}${esc(p?.name)}</b><span style="color:var(--mut)"> — ${esc(p?.gender || '')} - ${p?.age ?? ''}Y</span></div>
+      <div style="font-size:12px;color:var(--mut)">${esc(v.referrer || 'Self referral')} • Reg Time: ${v.date} • Visit <span class="num">${v.invoiceNo}</span>${tt?.cat ? ` • ${esc(tt.cat)}` : ''}</div>
+    </div>
     <div class="results-grid" style="margin-top:12px">
     ${fields.map((f, i) => { const val = t.results[f[0]] ?? '';
       return `<div class="res-field"><label>${esc(f[0])}${f[1] ? ` (${esc(f[1])})` : ''}</label>
       <input id="rf-${i}" value="${esc(val)}" oninput="resFlagLive(${i},'${esc(f[2] || '')}','${esc(f[3] || '')}')">
-      ${f[2] || f[3] ? `<div class="rf">مرجع: ${esc(f[2])} - ${esc(f[3])} <span id="rfl-${i}"></span></div>` : ''}</div>`;
+      ${f[2] || f[3] ? `<div class="rf num">( ${esc(f[2])} - ${esc(f[3])} ) <span id="rfl-${i}"></span></div>` : ''}</div>`;
     }).join('')}
     </div>
     <div class="field" style="margin-top:12px"><label>ملاحظات / تعليق الدكتور</label><input class="inp2" id="rf-notes" value="${esc(t.notes || '')}" style="width:100%"></div>
@@ -618,9 +685,9 @@ function resFlagLive(i, low, hi) {
   const n = parseFloat(el.value);
   if (el.value.trim() === '' || isNaN(n)) { fl.textContent = ''; el.style.borderColor = ''; return; }
   const lo = parseFloat(low), hi2 = parseFloat(hi);
-  if (!isNaN(lo) && n < lo) { fl.textContent = '⬇ واطي'; fl.style.color = '#c62828'; el.style.borderColor = '#c62828'; }
-  else if (!isNaN(hi2) && n > hi2) { fl.textContent = '⬆ عالي'; fl.style.color = '#c62828'; el.style.borderColor = '#c62828'; }
-  else { fl.textContent = '✓'; fl.style.color = '#2e7d32'; el.style.borderColor = '#2e7d32'; }
+  if (!isNaN(lo) && n < lo) { fl.textContent = 'L ↓'; fl.style.color = '#c62828'; fl.style.fontWeight = '900'; el.style.borderColor = '#c62828'; }
+  else if (!isNaN(hi2) && n > hi2) { fl.textContent = 'H ↑'; fl.style.color = '#c62828'; fl.style.fontWeight = '900'; el.style.borderColor = '#c62828'; }
+  else { fl.textContent = '✓'; fl.style.color = '#2e7d32'; fl.style.fontWeight = '700'; el.style.borderColor = '#2e7d32'; }
 }
 function resSave(visitId, idx, report) {
   const v = DB.visits.find(x => x.id === visitId); const t = v.tests[idx]; const tt = testById(t.testId);
@@ -632,37 +699,87 @@ function resSave(visitId, idx, report) {
   resPickPat();
   if (report) resReport(visitId);
 }
-/* تقرير نتائج قابل للطباعة */
+/* تقرير نتائج قابل للطباعة — بنفس شكل يسير (GenericReport) */
 function resReport(visitId) {
   const v = DB.visits.find(x => x.id === visitId); const p = patById(v.patientId); const h = DB.lab.header;
   const doneTests = v.tests.filter(t => t.status === 'done');
   if (!doneTests.length) return toast('⚠️ لسه مفيش نتائج محفوظة للحالة دي');
-  const flag = (val, low, hi) => {
+  const sexStr = p?.gender === 'أنثى' ? 'Female' : 'Male';
+  const ageStr = p?.age ? String(p.age) + ' Y' : '';
+  const flagOf = (val, low, hi) => {
     const n = parseFloat(val); if (val === '' || isNaN(n)) return ['', ''];
     const lo = parseFloat(low), hh = parseFloat(hi);
-    if (!isNaN(lo) && n < lo) return ['H', 'color:#c62828;font-weight:800'];
-    if (!isNaN(hh) && n > hh) return ['L', 'color:#c62828;font-weight:800'];
+    if (!isNaN(lo) && n < lo) return ['L', 'color:#c62828;font-weight:900'];
+    if (!isNaN(hh) && n > hh) return ['H', 'color:#c62828;font-weight:900'];
     return ['', ''];
+  };
+  const lineRow = (f, t) => {
+    const val = (t.results || {})[f[0]] ?? '';
+    const [fg, st] = flagOf(val, f[2], f[3]);
+    const ref = (f[2] || f[3]) ? `( ${esc(f[2] || '')} - ${esc(f[3] || '')} )` : '';
+    return `<div class="report-table-line">
+      <div class="rt-name">${esc(f[0])}</div>
+      <div class="rt-result" style="${st}">${esc(val)}${fg ? ` <b>${fg}</b>` : ''} <span class="rt-unit">${esc(f[1] || '')}</span></div>
+      <div class="rt-ref num">${ref}</div>
+    </div>`;
   };
   const w = window.open('', '_blank');
   w.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تقرير ${v.invoiceNo}</title>
-  <style>body{font-family:Tahoma;font-size:13px;padding:20px}.hd{text-align:center;border-bottom:2px solid #0d1b3e;padding-bottom:10px;margin-bottom:14px}
-  table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #999;padding:7px;text-align:center}th{background:#0d1b3e;color:#fff}
-  .info{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;margin:8px 0}.sch{text-align:center;color:#666;font-size:12px;margin-top:16px}
-  .sig{display:flex;justify-content:space-between;margin-top:40px}.notes{font-size:12.5px;color:#444;margin-top:6px}</style></head><body>
-  <div class="hd">${DB.lab.logo ? `<img src="${DB.lab.logo}" style="max-height:70px">` : ''}
-    <h2 style="margin:0">${esc(h.title)}</h2><div>${esc(h.address)}</div><div class="num">${esc(h.phones)}</div></div>
-  <div class="info"><span>الاسم: <b>${esc(p?.name)}</b></span><span>السن: <b>${p?.age || '-'}</b></span><span>النوع: <b>${esc(p?.gender || '-')}</b></span>
-  <span>التاريخ: <b>${v.date}</b></span><span>فاتورة: <b class="num">${v.invoiceNo}</b></span>${v.doctor ? `<span>الدكتور: <b>${esc(v.doctor)}</b></span>` : ''}</div>
-  ${doneTests.map(t => { const tt = testById(t.testId);
-    const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
-    return `<table><tr><th colspan="4" style="background:#1e5eff">${esc(tt?.name)}</th></tr>
-    <tr><th>القياس</th><th>النتيجة</th><th>الوحدة</th><th>المرجع</th></tr>
-    ${fields.map(f => { const val = (t.results || {})[f[0]] ?? ''; const [f2, st] = flag(val, f[2], f[3]);
-      return `<tr><td>${esc(f[0])}</td><td style="${st}">${esc(val)} ${f2 ? `<small>(${f2})</small>` : ''}</td><td>${esc(f[1] || '-')}</td><td class="num">${esc(f[2] || '')} - ${esc(f[3] || '')}</td></tr>`; }).join('')}
-    </table>${t.notes ? `<div class="notes">📝 ${esc(t.notes)}</div>` : ''}`; }).join('')}
-  <div class="sig"><span>توقيع الاخصائي: ..........................</span><span>توقيع الدكتور: ..........................</span></div>
-  <div class="sch">🕐 ${esc(DB.lab.schedule)}<br>${esc(h.footer)}</div>
+  <style>
+  body{font-family:Tahoma;margin:0;background:#fff}
+  .report-page{width:210mm;min-height:295mm;padding:10mm 12mm;box-sizing:border-box;margin:auto;display:flex;flex-direction:column}
+  .report-header{display:grid;grid-template-columns:1fr 1fr 1fr 52mm;grid-template-areas:"name date ref qr";gap:2mm;border:1.5px solid #333;border-radius:3mm;padding:3mm;margin-bottom:4mm}
+  .rh-name{grid-area:name}.rh-date{grid-area:date}.rh-ref{grid-area:ref}
+  .rh-cell{display:flex;flex-direction:column;gap:1mm;font-size:13px}
+  .rh-label{font-size:10.5px;color:#777;font-weight:700}
+  .rh-qr{grid-area:qr;border-right:1px dashed #999;padding-right:3mm;display:flex;flex-direction:column;gap:.5mm;font-size:11px;justify-content:center}
+  .rh-qr-title{font-weight:900;font-size:12px}
+  .rh-qr-line{direction:ltr;text-align:left}
+  .report-title{text-align:center;font-weight:900;font-size:16px;margin:2mm 0 4mm;color:#0d1b3e}
+  .report-table-head{display:flex;justify-content:space-between;font-weight:900;border-bottom:1px solid gray;padding-bottom:1mm;margin-bottom:1mm;font-size:13.5px}
+  .report-table-head div:nth-child(2){margin-right:auto;margin-left:22mm}
+  .report-table-line{display:flex;align-items:center;flex:0 0 8mm;border-bottom:1px dashed #adadad;font-size:13px}
+  .rt-name{width:44%}.rt-result{width:31%;font-weight:700}.rt-unit{color:#555;font-weight:400;font-size:11.5px}.rt-ref{width:25%;color:#333}
+  .report-profile{background:#cccccc;height:7mm;display:flex;align-items:center;padding:0 3mm;font-size:15px;font-weight:900;margin:2mm 0 0}
+  .report-comment{white-space:pre-wrap;margin:1.5mm 0;padding:0 3mm;font-size:12.5px}
+  .report-footer{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;padding-top:6mm}
+  .report-remarks{font-size:12px;color:#444;max-width:60%}
+  .report-sign{text-align:center}
+  .report-sign-title{font-size:12px;color:#666}
+  .report-sign-name{font-weight:900;border-top:1px solid #333;padding-top:1mm;margin-top:8mm;min-width:45mm}
+  .report-watermark{text-align:center;font-size:10px;color:#aaa;margin-top:2mm}
+  @media print{@page{size:A4;margin:0}body{padding:0}}
+  </style></head><body>
+  <div class="report-page">
+    <div class="report-header">
+      <div class="rh-cell rh-name"><span class="rh-label">اسم المريض / Patient</span><b>${esc(p?.name)}</b></div>
+      <div class="rh-cell rh-date"><span class="rh-label">التاريخ / Date</span><span class="num">${v.date}</span></div>
+      <div class="rh-cell rh-ref"><span class="rh-label">الطبيب المحيل / Referral</span>${esc(v.doctor || 'Self referral')}</div>
+      <div class="rh-qr">
+        <div class="rh-qr-title">${esc(h.title || DB.lab.name)}</div>
+        <div class="rh-qr-line num">Request: ${v.invoiceNo}</div>
+        <div class="rh-qr-line num">Patient: ${esc(p?.code)}</div>
+        <div class="rh-qr-line">${sexStr} - ${ageStr}</div>
+      </div>
+    </div>
+    <div class="report-title">تقرير نتائج التحاليل</div>
+    <div class="report-body">
+      <div class="report-table-head"><div>Test name</div><div>Result</div><div>Reference range</div></div>
+      ${doneTests.map(t => { const tt = testById(t.testId);
+        const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+        return `<div class="report-profile">${esc(tt?.name || '')}</div>
+        ${fields.map(f => lineRow(f, t)).join('')}
+        ${t.notes ? `<pre class="report-comment">${esc(t.notes)}</pre>` : ''}`; }).join('')}
+    </div>
+    <div class="report-footer">
+      <div class="report-remarks">🕐 ${esc(DB.lab.schedule)}<br>${esc(h.footer || '')}</div>
+      <div class="report-sign">
+        <div class="report-sign-title">توقيع أخصائي المختبر</div>
+        <div class="report-sign-name">${esc(DB.lab.specialist || '')}</div>
+      </div>
+    </div>
+    <div class="report-watermark">CSL — csl.mtayea.com</div>
+  </div>
   <script>window.print()<\/script></body></html>`);
   w.document.close();
 }
@@ -1157,7 +1274,24 @@ function renderSettings() {
     </div>`;
     return;
   }
+  const cs = (typeof cloudStatusInfo === 'function') ? cloudStatusInfo() : { ok: false, last: null };
+  const csLast = cs.last ? new Date(cs.last).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' }) : 'لسه مفيش نسخة مرفوعة من الجهاز ده';
+  window.__cloudPushed = () => {
+    const el = document.getElementById('cs-last');
+    if (el) el.textContent = cloudStatusInfo().last ? new Date(cloudStatusInfo().last).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' }) : 'لسه مفيش نسخة مرفوعة من الجهاز ده';
+    toast('✅ اترفعت نسخة الحماية على السحابة');
+  };
   shell('الإعدادات', `
+  <div class="card"><h3>☁️ حماية السحابة</h3>
+    <p style="margin:0 0 10px;font-size:13px;color:#556">
+      ${cs.ok ? '🟢 <b>متصل بالسحابة</b> — بياناتك بتتزامن تلقائياً، وكل جهاز يدخل بنفس كود التفعيل بيشوف نفس البيانات.' : '🔴 <b>شغال محلياً بس</b> (مفيش نت) — البيانات محفوظة على الجهاز وهتتزامن أول ما النت يرجع.'}<br>
+      🕐 آخر نسخة حماية مرفوعة: <b id="cs-last">${esc(csLast)}</b>
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-p" onclick="cloudBackupNow()">☁️ ارفع نسخة حماية دلوقتي</button>
+      <button class="btn btn-o" onclick="cloudRestoreNow()">⬇️ استرجاع نسخة السحابة على الجهاز ده</button>
+    </div>
+  </div>
   <div class="card"><h3>🏷️ بيانات المعمل</h3>
     <div class="grid2">
       <div class="field"><label>اسم المعمل</label><input class="inp2" id="st-name" value="${esc(DB.lab.name)}" style="width:100%"></div>
@@ -1320,11 +1454,12 @@ function stAddTest() {
   save(); $('#pr-new-name').value = ''; $('#pr-new-price').value = '';
   stNewFields = []; stRenderFieldRows(); stPriceSearch(); toast('✅ تمت الإضافة');
 }
-function stAddUser() {
+async function stAddUser() {
   const name = $('#us-name').value.trim(), user = $('#us-user').value.trim(), pass = $('#us-pass').value;
   if (!name || !user || !pass) return toast('⚠️ أكمل كل الحقول');
   if (DB.users.find(u => u.user === user)) return toast('⚠️ اسم المستخدم موجود');
-  DB.users.push({ id: uid('u'), name, user, pass, role: $('#us-role').value });
+  const hp = await hashNewPass(pass);
+  DB.users.push({ id: uid('u'), name, user, salt: hp.salt, pass: hp.pass, role: $('#us-role').value });
   save(); toast('✅ تمت الإضافة'); renderSettings();
 }
 function stDelUser(id) { if (!confirm('حذف المستخدم؟')) return; DB.users = DB.users.filter(u => u.id !== id); save(); renderSettings(); }

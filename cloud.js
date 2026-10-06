@@ -1,6 +1,8 @@
-/* ================= المزامنة السحابية (Firebase) =================
-   كل معمل بيتزامن على Firestore في كولكشن tayealab — مستند لكل معمل
-   + مستند للموزّع (meta). آخر كتابة تكسب. شغال تلقائياً وحتى بدون نت بيشتغل محلي. */
+/* ================= المزامنة السحابية (Firebase + Auth) =================
+   كل معمل بيتزامن على Firestore في كولكشن csl — مستند لكل معمل + مستند _meta للموزّع.
+   الأمان: كل جهاز لازم يعمل Firebase Auth بحساب خاص بمعمله (البريد مشتق من كود
+   التفعيل) — Firestore Rules بترفض أي طلب من غير مصادقة أو لمعمل غيره.
+   آخر كتابة تكسب. شغال تلقائياً وحتى بدون نت بيشتغل محلي. */
 (function () {
   const firebaseConfig = {
     apiKey: "AIzaSyAcLAL-3zzx4biBn97QqBiaWS4MU7Cf3E",
@@ -13,13 +15,18 @@
     measurementId: "G-4TVTS8QKE2"
   };
 
+  /* بريد المعرف الخاص بكيان (معمل/موزّع) — مشتق من id فقط، مفيش أسرار فيه */
+  const mailFor = id => ('csl_' + id.replace(/[^a-z0-9]/gi, '_') + '@csl-app.web.app').toLowerCase();
+
   const CLOUD = {
-    ok: false, db: null,
+    ok: false, db: null, auth: null,
     labUnsub: null, metaUnsub: null,
     lastLabPush: null, lastMetaPush: null,
     lastLabApplied: null, lastMetaApplied: null,
     labTimer: null, metaTimer: null,
-    pulling: false
+    authLab: null,     // معمل آخر عملنا login لحسابه
+    authSuper: false,
+    authing: null      // وعد المصادقة الجاري
   };
   window.CLOUD = CLOUD;
 
@@ -28,6 +35,7 @@
       if (typeof firebase === 'undefined') return;
       if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
       CLOUD.db = firebase.firestore();
+      CLOUD.auth = firebase.auth();
       CLOUD.ok = true;
     } catch (e) { console.error('Cloud init error:', e); CLOUD.ok = false; }
     updateSyncBadge();
@@ -40,30 +48,96 @@
     if (forceStatus) { el.textContent = forceText; el.className = 'sync-badge ' + (forceStatus === 'ok' ? 'on' : 'warn'); }
   };
 
+  /* ---------- مصادقة Firebase Auth ---------- */
+  async function authAs(labId) {
+    if (!CLOUD.ok || !CLOUD.auth) throw new Error('offline');
+    if (CLOUD.authLab === labId && CLOUD.auth.currentUser) return CLOUD.auth.currentUser;
+    const lab = (typeof META !== 'undefined' && META && META.labs) ? META.labs.find(l => l.id === labId) : null;
+    const code = lab && lab.code;
+    if (!code) throw new Error('no-code');
+    const email = mailFor(labId);
+    const trySign = () => CLOUD.auth.signInWithEmailAndPassword(email, code);
+    try {
+      await trySign();
+    } catch (e) {
+      if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-login-credentials') {
+        // أول مرة: أنشئ حساب المعمل بالكود ككلمة سر
+        try {
+          await CLOUD.auth.createUserWithEmailAndPassword(email, code);
+        } catch (e2) {
+          if (e2.code === 'auth/email-already-in-use') await trySign();
+          else if (e2.code === 'auth/operation-not-allowed') await trySign(); // الأدمن فعّل Email/Password في الكونسول
+          else throw e2;
+        }
+      } else if (e.code === 'auth/too-many-requests') {
+        await new Promise(r => setTimeout(r, 4000));
+        await trySign();
+      } else throw e;
+    }
+    CLOUD.authLab = labId; CLOUD.authSuper = false;
+    return CLOUD.auth.currentUser;
+  }
+
+  async function authSuper() {
+    if (!CLOUD.ok || !CLOUD.auth) throw new Error('offline');
+    if (CLOUD.authSuper && CLOUD.auth.currentUser) return CLOUD.auth.currentUser;
+    const su = (typeof META !== 'undefined' && META && META.superUser) || { user: 'mt', pass: 'mhmd@1993' };
+    const email = mailFor('super_' + su.user);
+    const LEGACY = ['mozo']; /* باسوردات قديمة — الدخول بيها بيحدّث حساب Firebase Auth للجديد تلقائياً */
+    const signIn = p => CLOUD.auth.signInWithEmailAndPassword(email, p);
+    const create = p => CLOUD.auth.createUserWithEmailAndPassword(email, p);
+    let ok = false;
+    for (const p of [su.pass, ...LEGACY]) {
+      try { await signIn(p); ok = true; if (p !== su.pass) { try { await CLOUD.auth.currentUser.updatePassword(su.pass); } catch (e) {} } break; }
+      catch (e) {
+        if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-login-credentials') {
+          try { await create(p); ok = true; break; } catch (e2) { /* email-in-use → جرّب اللي بعده */ }
+        }
+        /* wrong-password → جرّب اللي بعده */
+      }
+    }
+    if (!ok) throw new Error('auth-failed');
+    CLOUD.authSuper = true; CLOUD.authLab = null;
+    return CLOUD.auth.currentUser;
+  }
+
   /* ---------- دفع بيانات (مع منع الحلقات) ---------- */
-  function cloudPushLab() {
+  async function cloudPushLab() {
     if (!CLOUD.ok || !LABID || !DB) return;
     const payload = JSON.stringify(DB);
     if (payload === CLOUD.lastLabApplied) { updateSyncBadge('ok', '☁️ متزامن مع السحابة'); return; }
     updateSyncBadge('busy', '⏳ جاري المزامنة…');
     const at = new Date().toISOString();
-    CLOUD.lastLabPush = at;
-    CLOUD.lastLabApplied = payload;
-    const req = CLOUD.db.collection('csl').doc(LABID).set({ dataJson: payload, updatedAt: at });
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000));
-    Promise.race([req, timeout])
-      .then(() => updateSyncBadge('ok', '☁️ متزامن مع السحابة'))
-      .catch(e => { console.error('Cloud push error:', e); updateSyncBadge('err', '⚠️ تعذّر المزامنة — محفوظ محلياً'); });
+    try {
+      await authAs(LABID);
+      CLOUD.lastLabPush = at;
+      CLOUD.lastLabApplied = payload;
+      const req = CLOUD.db.collection('csl').doc(LABID).set({ dataJson: payload, updatedAt: at });
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 15000));
+      await Promise.race([req, timeout]);
+      try { localStorage.setItem('csl_sync_' + LABID, at); } catch (e) {}
+      updateSyncBadge('ok', '☁️ متزامن مع السحابة');
+      if (typeof window.__cloudPushed === 'function') window.__cloudPushed();
+    } catch (e) {
+      console.error('Cloud push error:', e);
+      if (e.code && e.code.indexOf('auth/') === 0 && e.code !== 'auth/network-request-failed')
+        updateSyncBadge('err', '⚠️ رُفضت المزامنة — صلاحية غير كافية');
+      else
+        updateSyncBadge('err', '⚠️ تعذّر المزامنة — محفوظ محلياً');
+    }
   }
 
-  function cloudPushMeta() {
+  async function cloudPushMeta() {
     if (!CLOUD.ok || !META) return;
     const payload = JSON.stringify(META);
     if (payload === CLOUD.lastMetaApplied) return;
     const at = new Date().toISOString();
-    CLOUD.lastMetaPush = at;
-    CLOUD.lastMetaApplied = payload;
-    CLOUD.db.collection('csl').doc('_meta').set({ dataJson: payload, updatedAt: at }).catch(e => console.error('Meta push:', e));
+    try {
+      await authSuper();
+      CLOUD.lastMetaPush = at;
+      CLOUD.lastMetaApplied = payload;
+      await CLOUD.db.collection('csl').doc('_meta').set({ dataJson: payload, updatedAt: at });
+    } catch (e) { console.error('Meta push:', e); }
   }
 
   window.cloudSchedulePush = function () {
@@ -72,17 +146,20 @@
     CLOUD.labTimer = setTimeout(cloudPushLab, 800);
   };
   /* دفع بيانات معمل محدد (من لوحة الموزّع — مثلاً بعد ريسيت كلمة سر) */
-  window.cloudSchedulePushLab = function (labId, dbObj) {
+  window.cloudSchedulePushLab = async function (labId, dbObj) {
     if (!CLOUD.ok) return;
     const payload = JSON.stringify(dbObj);
     const at = new Date().toISOString();
-    CLOUD.db.collection('csl').doc(labId).set({ dataJson: payload, updatedAt: at }).catch(e => console.error('push lab:', e));
+    try {
+      await authAs(labId);
+      await CLOUD.db.collection('csl').doc(labId).set({ dataJson: payload, updatedAt: at });
+    } catch (e) { console.error('push lab:', e); }
   };
   /* سحب مستخدمي معمل من السحابة لو مش موجودين محلياً */
   window.cloudFetchLabUsers = function (labId) {
     if (!CLOUD.ok) return toast('⚠️ السحابة مش متاحة');
     toast('⏳ بجيب بيانات المعمل من السحابة…');
-    CLOUD.db.collection('csl').doc(labId).get().then(snap => {
+    authAs(labId).then(() => CLOUD.db.collection('csl').doc(labId).get()).then(snap => {
       if (!snap.exists) return toast('⚠️ المعمل لسه مااتفتحش على أي جهاز — مفيش نسخة سحابية');
       const remote = snap.data();
       const db = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
@@ -100,22 +177,23 @@
   /* ---------- سحب بيانات عند فتح المعمل ---------- */
   window.cloudPullLab = function (labId, localUpdatedGuess) {
     if (!CLOUD.ok) return;
-    CLOUD.db.collection('csl').doc(labId).get().then(snap => {
+    authAs(labId).then(() => CLOUD.db.collection('csl').doc(labId).get()).then(snap => {
       if (!snap.exists) { cloudPushLab(); return; } // السحابة فاضية → ارفع المحلي
       const remote = snap.data();
       const remoteData = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
       const localRaw = localStorage.getItem(labKey(labId));
       const local = localRaw ? JSON.parse(localRaw) : null;
       if (!local) {
-        // مفيش محلي → نزّل من السحابة
         LABID = labId; DB = remoteData;
         localStorage.setItem(labKey(labId), JSON.stringify(DB));
         route();
       }
-      // الاشتراك اللحظي
       subscribeLab(labId);
       updateSyncBadge('ok', '☁️ متصل بالسحابة');
-    }).catch(e => { console.error('Cloud pull:', e); updateSyncBadge(); });
+    }).catch(e => {
+      console.error('Cloud pull:', e);
+      updateSyncBadge();
+    });
   };
 
   function subscribeLab(labId) {
@@ -124,7 +202,7 @@
       CLOUD.labUnsub = CLOUD.db.collection('csl').doc(labId).onSnapshot(snap => {
         if (!snap.exists) return;
         const remote = snap.data();
-        if (remote.updatedAt === CLOUD.lastLabPush) return; // كتابتنا احنا
+        if (remote.updatedAt === CLOUD.lastLabPush) return;
         const remoteData = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
         const localRaw = localStorage.getItem(labKey(labId));
         const local = localRaw ? JSON.parse(localRaw) : null;
@@ -134,16 +212,47 @@
           localStorage.setItem(labKey(labId), JSON.stringify(DB));
           if (session() && session().labId === labId) {
             updateSyncBadge('ok', '☁️ اتحدّث من جهاز آخر');
-            route(); // حدّث الشاشة بالبيانات الجديدة
+            route();
           }
         }
       }, e => console.error('lab snapshot:', e));
     } catch (e) { console.error(e); }
   }
 
+  /* ---------- زرار حماية السحابة (دلوقتي حالاً) ---------- */
+  window.cloudBackupNow = async function () {
+    if (!CLOUD.ok) return toast('⚠️ مفيش نت — السحابة مش متاحة دلوقتي (البيانات محفوظة على الجهاز)');
+    updateSyncBadge('busy', '⏳ جاري رفع نسخة الحماية…');
+    CLOUD.lastLabApplied = null;
+    await cloudPushLab();
+    if (typeof META !== 'undefined' && META) { CLOUD.lastMetaApplied = null; await cloudPushMeta(); }
+  };
+
+  window.cloudRestoreNow = function () {
+    if (!CLOUD.ok) return toast('⚠️ مفيش نت — السحابة مش متاحة دلوقتي');
+    if (!confirm('استرجاع نسخة السحابة هيسحب آخر نسخة محفوظة ويستبدل بيها بيانات الجهاز ده. متأكد؟')) return;
+    toast('⏳ بجيب نسخة الحماية من السحابة…');
+    authAs(LABID).then(() => CLOUD.db.collection('csl').doc(LABID).get()).then(snap => {
+      if (!snap.exists) return toast('⚠️ مفيش نسخة سحابية للمعمل ده لسه — ارفع نسخة الأول');
+      const remote = snap.data();
+      DB = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
+      localStorage.setItem(labKey(LABID), JSON.stringify(DB));
+      updateSyncBadge('ok', '☁️ اتحرّست النسخة');
+      toast('✅ اتحرّست نسخة السحابة على الجهاز ده');
+      route();
+    }).catch(e => { console.error(e); toast('⚠️ تعذّر السحب من السحابة'); });
+  };
+
+  window.cloudStatusInfo = function () {
+    return {
+      ok: CLOUD.ok && !!(CLOUD.auth && CLOUD.auth.currentUser),
+      last: LABID ? localStorage.getItem('csl_sync_' + LABID) : null
+    };
+  };
+
   window.cloudPullMeta = function () {
     if (!CLOUD.ok || !META) return;
-    CLOUD.db.collection('csl').doc('_meta').get().then(snap => {
+    authSuper().then(() => CLOUD.db.collection('csl').doc('_meta').get()).then(snap => {
       if (!snap.exists) { cloudPushMeta(); return; }
       const remote = snap.data();
       if (remote.updatedAt === CLOUD.lastMetaPush) return;
@@ -167,5 +276,13 @@
         }
       }, () => {});
     }).catch(e => console.error('meta pull:', e));
+  };
+
+  /* خروج المصادقة السحابية عند تسجيل الخروج من النظام */
+  window.cloudSignOut = function () {
+    CLOUD.authLab = null; CLOUD.authSuper = false;
+    if (CLOUD.labUnsub) { CLOUD.labUnsub(); CLOUD.labUnsub = null; }
+    if (CLOUD.metaUnsub) { CLOUD.metaUnsub(); CLOUD.metaUnsub = null; }
+    if (CLOUD.auth) CLOUD.auth.signOut().catch(() => {});
   };
 })();

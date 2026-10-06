@@ -1,0 +1,22 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // كل معمل له مستند باسم معرفه — يقرا/يكتب بس لو مسجل دخول بحساب المعمل نفسه
+    // البريد محسوب في التطبيق: 'csl_' + labId + '@csl-app.web.app' (كل small)
+    match /csl/{labId} {
+      allow read, write: if request.auth != null
+        && request.auth.token.email.lower() == 'csl_' + labId.lower() + '@csl-app.web.app';
+
+      // مستند الموزّع العام: بس حسابات السوبر (csl_super_...)
+      allow read, write: if labId == '_meta'
+        && request.auth != null
+        && request.auth.token.email.lower().matches('^csl_super_.*@csl-app\\.web\\.app$');
+    }
+
+    // ممنوع أي كولكشن تاني نهائياً
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
