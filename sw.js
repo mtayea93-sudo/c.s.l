@@ -1,5 +1,5 @@
 /* CSL service worker — يخلي النظام يشتغل أوفلاين وينفع يتثبت كتطبيق */
-const CACHE = 'csl-v4';
+const CACHE = 'csl-v5';
 const CORE = [
   './',
   './index.html',
@@ -12,7 +12,10 @@ const CORE = [
   './labops.js',
   './icon-192.png',
   './icon-512.png',
-  './icon-maskable.png'
+  './icon-maskable.png',
+  './logo-wide.png',
+  './icon-maskable-192.png',
+  './icon-maskable-512.png'
 ];
 
 self.addEventListener('install', e => {

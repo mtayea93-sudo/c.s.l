@@ -129,7 +129,7 @@ let loginMode = 'lab';
 function renderLogin() {
   $('#root').innerHTML = `
   <div id="login-view"><div class="login-box">
-    <h1>🧪 CSL</h1>
+    <img src="logo-wide.png" alt="C.S.L" style="width:100%;max-width:340px;display:block;margin:0 auto 6px;filter:drop-shadow(0 6px 18px rgba(0,0,0,.35))">
     <div class="sub">Complete System for Laboratories — نظام المعمل المتكامل</div>
     <div class="ltabs">
       <button class="btn ${loginMode === 'lab' ? 'btn-p' : 'btn-o'}" onclick="loginTab('lab')">دخول معمل</button>
