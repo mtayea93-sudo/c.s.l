@@ -588,12 +588,17 @@ function doVisitPay(id) {
 
 /* ---------- فاتورة طباعة ---------- */
 function printInvoice(id) {
-  const v = DB.visits.find(x => x.id === id); const p = patById(v.patientId); const h = DB.lab.header;
+  const v = DB.visits.find(x => x.id === id); const p = patById(v.patientId); const h = DB.lab.header || {};
   const w = window.open('', '_blank');
   w.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>فاتورة ${v.invoiceNo}</title>
-  <style>body{font-family:Tahoma;font-size:13px;padding:20px}h2{margin:0}.hd{text-align:center;border-bottom:2px solid #0d1b3e;padding-bottom:10px;margin-bottom:14px}
+  <style>body{font-family:Tahoma;font-size:13px;padding:20px;position:relative;z-index:1}h2{margin:0}.hd{text-align:center;border-bottom:2px solid #0d1b3e;padding-bottom:10px;margin-bottom:14px}
   table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #999;padding:7px;text-align:center}th{background:#0d1b3e;color:#fff}
-  .t{margin-top:14px;font-size:15px}.sch{text-align:center;color:#666;font-size:12px;margin-top:16px}</style></head><body>
+  .t{margin-top:14px;font-size:15px}.sch{text-align:center;color:#666;font-size:12px;margin-top:16px}
+  .report-headimg{width:100%;max-height:45mm;object-fit:contain;margin-bottom:10px}
+  .report-wm{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none}
+  .report-wm img{max-width:75%;max-height:75%;opacity:.12}</style></head><body>
+  ${h.wmImg ? `<div class="report-wm"><img src="${h.wmImg}"></div>` : ''}
+  ${h.headerImg ? `<img class="report-headimg" src="${h.headerImg}">` : ''}
   <div class="hd">${DB.lab.logo ? `<img src="${DB.lab.logo}" style="max-height:70px">` : ''}
     <h2>${esc(h.title)}</h2><div>${esc(h.address)}</div><div class="num">${esc(h.phones)}</div></div>
   <div>فاتورة رقم: <b class="num">${v.invoiceNo}</b> — التاريخ: <b>${v.date}</b></div>
@@ -644,12 +649,13 @@ function resListHtml(vs) {
     return `<div class="card">
       <h3 style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <span>🧍 <b>${esc(p?.name)}</b> <span class="num" style="color:var(--mut)">فاتورة ${v.invoiceNo} — ${v.date}</span></span>
-        <span><button class="btn btn-g btn-s" onclick="resReport('${v.id}')">🖨️ تقرير</button></span></h3>
-      <table><tr><th>التحليل</th><th>الحالة</th><th></th></tr>
+        <span><button class="btn btn-g btn-s" onclick="resReport('${v.id}')" title="كل التحاليل في تقرير واحد">🖨️ تقرير شامل (الكل)</button></span></h3>
+      <table><tr><th>التحليل</th><th>الحالة</th><th></th><th></th></tr>
       ${v.tests.map((t, i) => { const tt = testById(t.testId);
         return `<tr><td style="font-weight:700">${esc(tt?.name)}</td>
         <td>${t.status === 'done' ? '<span class="pill p-done">✅ بنتيجة</span>' : '<span class="pill p-unpaid">⏳ منتظر</span>'}</td>
-        <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل النتيجة' : 'إدخال النتيجة'}</button></td></tr>`;
+        <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل النتيجة' : 'إدخال النتيجة'}</button></td>
+        <td>${t.status === 'done' ? `<button class="btn btn-o btn-s" onclick="resReport('${v.id}',${i})" title="طباعة التحليل ده لوحده">🖨️ تقرير</button>` : ''}</td></tr>`;
       }).join('')}</table>
     </div>`; }).join('');
 }
@@ -700,9 +706,14 @@ function resSave(visitId, idx, report) {
   if (report) resReport(visitId);
 }
 /* تقرير نتائج قابل للطباعة — بنفس شكل يسير (GenericReport) */
-function resReport(visitId) {
-  const v = DB.visits.find(x => x.id === visitId); const p = patById(v.patientId); const h = DB.lab.header;
-  const doneTests = v.tests.filter(t => t.status === 'done');
+function resReport(visitId, onlyIdx) {
+  const v = DB.visits.find(x => x.id === visitId); const p = patById(v.patientId); const h = DB.lab.header || {};
+  let doneTests = v.tests.filter(t => t.status === 'done');
+  if (onlyIdx != null) {
+    const one = v.tests[onlyIdx];
+    if (!one || one.status !== 'done') return toast('⚠️ التحليل ده لسه مفيهوش نتيجة');
+    doneTests = [one];
+  }
   if (!doneTests.length) return toast('⚠️ لسه مفيش نتائج محفوظة للحالة دي');
   const sexStr = p?.gender === 'أنثى' ? 'Female' : 'Male';
   const ageStr = p?.age ? String(p.age) + ' Y' : '';
@@ -748,9 +759,15 @@ function resReport(visitId) {
   .report-sign-title{font-size:12px;color:#666}
   .report-sign-name{font-weight:900;border-top:1px solid #333;padding-top:1mm;margin-top:8mm;min-width:45mm}
   .report-watermark{text-align:center;font-size:10px;color:#aaa;margin-top:2mm}
+  .report-headimg{width:100%;max-height:45mm;object-fit:contain;margin-bottom:3mm}
+  .report-wm{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none}
+  .report-wm img{max-width:75%;max-height:75%;opacity:.12}
+  .report-page{position:relative;z-index:1}
   @media print{@page{size:A4;margin:0}body{padding:0}}
   </style></head><body>
+  ${h.wmImg ? `<div class="report-wm"><img src="${h.wmImg}"></div>` : ''}
   <div class="report-page">
+    ${h.headerImg ? `<img class="report-headimg" src="${h.headerImg}">` : ''}
     <div class="report-header">
       <div class="rh-cell rh-name"><span class="rh-label">اسم المريض / Patient</span><b>${esc(p?.name)}</b></div>
       <div class="rh-cell rh-date"><span class="rh-label">التاريخ / Date</span><span class="num">${v.date}</span></div>
@@ -1310,6 +1327,16 @@ function renderSettings() {
       <div class="field"><label>أرقام التليفونات</label><input class="inp2 num" id="st-h-phones" value="${esc(DB.lab.header.phones)}" style="width:100%"></div>
       <div class="field"><label>سطر التذييل</label><input class="inp2" id="st-h-footer" value="${esc(DB.lab.header.footer)}" style="width:100%"></div>
     </div>
+    <div class="grid2" style="margin-top:4px">
+      <div class="field"><label>🖼️ صورة رأس التقرير — بتظهر في أعلى التقرير والفاتورة (اختياري)</label>
+        <input type="file" accept="image/*" class="inp2" id="st-h-headimg" onchange="stUploadHeaderImg(this)" style="width:100%">
+        ${DB.lab.header.headerImg ? `<div style="margin-top:6px"><img src="${DB.lab.header.headerImg}" style="max-height:60px;border-radius:8px;border:1px solid var(--line)"> <a href="javascript:stClearHeaderImg()" style="color:#c62828;font-size:12px">✖ إزالة</a></div>` : ''}
+      </div>
+      <div class="field"><label>🔏 لوجو العلامة المائية — بيظهر خلف التقرير بشفافية 12% (اختياري)</label>
+        <input type="file" accept="image/*" class="inp2" id="st-h-wm" onchange="stUploadWatermark(this)" style="width:100%">
+        ${DB.lab.header.wmImg ? `<div style="margin-top:6px"><img src="${DB.lab.header.wmImg}" style="max-height:60px;border-radius:8px;border:1px solid var(--line);opacity:.4"> <a href="javascript:stClearWatermark()" style="color:#c62828;font-size:12px">✖ إزالة</a></div>` : ''}
+      </div>
+    </div>
     <button class="btn btn-p btn-s" onclick="stSaveHeader()">💾 حفظ الترويسة</button>
   </div>
   <div class="card"><h3>🏷️ قائمة الأسعار (${DB.tests.length} تحليل)</h3>
@@ -1413,7 +1440,23 @@ function stSaveRef(id) {
 }
 function saveSuper() { META.superUser = { user: $('#sp-user').value.trim(), pass: $('#sp-pass').value }; saveMeta(); toast('✅ تم الحفظ'); }
 function stSaveLab() { DB.lab.name = $('#st-name').value.trim(); DB.lab.schedule = $('#st-schedule').value.trim(); save(); toast('✅ تم الحفظ'); renderSettings(); }
-function stSaveHeader() { DB.lab.header = { title: $('#st-h-title').value.trim(), address: $('#st-h-address').value.trim(), phones: $('#st-h-phones').value.trim(), footer: $('#st-h-footer').value.trim() }; save(); toast('✅ تم حفظ الترويسة'); }
+function stSaveHeader() { DB.lab.header = { ...DB.lab.header, title: $('#st-h-title').value.trim(), address: $('#st-h-address').value.trim(), phones: $('#st-h-phones').value.trim(), footer: $('#st-h-footer').value.trim() }; save(); toast('✅ تم حفظ الترويسة'); }
+/* صورة رأس التقرير — بتحفظ فور اختيارها */
+function stUploadHeaderImg(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { DB.lab.header = DB.lab.header || {}; DB.lab.header.headerImg = r.result; save(); toast('✅ اتحفظت صورة الرأس'); renderSettings(); };
+  r.readAsDataURL(f);
+}
+function stClearHeaderImg() { if (DB.lab.header) delete DB.lab.header.headerImg; save(); renderSettings(); }
+/* لوجو العلامة المائية — بيتحفظ فور اختياره */
+function stUploadWatermark(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { DB.lab.header = DB.lab.header || {}; DB.lab.header.wmImg = r.result; save(); toast('✅ اتحفظت العلامة المائية'); renderSettings(); };
+  r.readAsDataURL(f);
+}
+function stClearWatermark() { if (DB.lab.header) delete DB.lab.header.wmImg; save(); renderSettings(); }
 function stUploadLogo(inp) {
   const f = inp.files[0]; if (!f) return;
   const r = new FileReader();

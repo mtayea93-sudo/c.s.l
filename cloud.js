@@ -65,10 +65,27 @@
         try {
           await CLOUD.auth.createUserWithEmailAndPassword(email, code);
         } catch (e2) {
-          if (e2.code === 'auth/email-already-in-use') await trySign();
-          else if (e2.code === 'auth/operation-not-allowed') await trySign(); // الأدمن فعّل Email/Password في الكونسول
+          if (e2.code === 'auth/email-already-in-use') {
+            /* الحساب موجود بالفعل بس الباسورد مش متطابق (حساب قديم من نسخة سابقة) —
+               جرّب الصيغ القديمة المحتملة، ولو وحدة نجحت حدّث الباسورد للكود الحالي */
+            const legacy = [code.replace(/-/g, ''), 'csl-' + code, 'csl' + code.replace(/-/g, ''), code.toUpperCase(), code.toLowerCase()];
+            let fixed = false;
+            for (const lp of legacy) {
+              try {
+                await CLOUD.auth.signInWithEmailAndPassword(email, lp);
+                await CLOUD.auth.currentUser.updatePassword(code);
+                fixed = true; break;
+              } catch (e3) { /* جرّب اللي بعدها */ }
+            }
+            if (!fixed) throw new Error('auth-stale-password');
+          }
+          else if (e2.code === 'auth/operation-not-allowed') throw new Error('auth-provider-disabled');
           else throw e2;
         }
+      } else if (e.code === 'auth/wrong-password') {
+        throw new Error('auth-stale-password');
+      } else if (e.code === 'auth/operation-not-allowed') {
+        throw new Error('auth-provider-disabled');
       } else if (e.code === 'auth/too-many-requests') {
         await new Promise(r => setTimeout(r, 4000));
         await trySign();
@@ -120,7 +137,13 @@
       if (typeof window.__cloudPushed === 'function') window.__cloudPushed();
     } catch (e) {
       console.error('Cloud push error:', e);
-      if (e.code && e.code.indexOf('auth/') === 0 && e.code !== 'auth/network-request-failed')
+      if (e.message === 'auth-provider-disabled')
+        updateSyncBadge('err', '🚫 فعّل «البريد/كلمة السر» من Firebase Console ← Authentication ← Sign-in method');
+      else if (e.message === 'auth-stale-password')
+        updateSyncBadge('err', '⚠️ حساب المزامنة قديم: Firebase ← Authentication ← Users ← امسح ' + mailFor(LABID));
+      else if (e.code === 'permission-denied')
+        updateSyncBadge('err', '🚫 انشر ملف firestore.rules في Firebase Console ← Firestore ← Rules');
+      else if (e.code && e.code.indexOf('auth/') === 0 && e.code !== 'auth/network-request-failed')
         updateSyncBadge('err', '⚠️ رُفضت المزامنة — صلاحية غير كافية');
       else
         updateSyncBadge('err', '⚠️ تعذّر المزامنة — محفوظ محلياً');
