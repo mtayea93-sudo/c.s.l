@@ -121,6 +121,35 @@
     return CLOUD.auth.currentUser;
   }
 
+  /* قارئ _meta فقط: لو حساب الموزّع متسجل بباسورد قديمة (غير متطابقة) أي جهاز جديد يقدر يعمل
+     حساب قارئ مؤقت بصيغة csl_super_r* — القواعد تسمح لأي csl_super_* بقراءة _meta.
+     بيتعمل مرة واحدة لكل جهاز وبتتحفظ بياناته عليه. */
+  function authSuperReader() {
+    if (!CLOUD.ok || !CLOUD.auth) throw new Error('offline');
+    let cred = null;
+    try { cred = JSON.parse(localStorage.getItem('csl_super_reader') || 'null'); } catch (e) {}
+    if (!cred) {
+      cred = {
+        email: 'csl_super_r' + Math.random().toString(36).slice(2, 12) + '@csl-app.web.app',
+        pass: Math.random().toString(36).slice(2, 16) + 'A1!'
+      };
+    }
+    const fail = e => {
+      if (e.code === 'auth/network-request-failed') throw new Error('offline');
+      if (e.code === 'auth/operation-not-allowed') throw new Error('auth-provider-disabled');
+      throw new Error('auth-failed');
+    };
+    const save = () => {
+      try { localStorage.setItem('csl_super_reader', JSON.stringify(cred)); } catch (e) {}
+      CLOUD.authSuper = true; CLOUD.authLab = null;
+      return CLOUD.auth.currentUser;
+    };
+    return CLOUD.auth.signInWithEmailAndPassword(cred.email, cred.pass)
+      .then(save)
+      .catch(() => CLOUD.auth.createUserWithEmailAndPassword(cred.email, cred.pass).then(save).catch(fail));
+  }
+  window.authSuperReader = authSuperReader;
+
   /* ---------- دفع بيانات (مع منع الحلقات) ---------- */
   async function cloudPushLab() {
     if (!CLOUD.ok || !LABID || !DB) return;
@@ -289,8 +318,13 @@
   /* سحب واحد بـ promise — بيرمي الخطأ لو فشل */
   window.cloudPullMetaAwait = function () {
     if (!CLOUD.ok || !META) return Promise.reject(new Error('offline'));
-    return authSuper()
-      .then(() => CLOUD.db.collection('csl').doc('_meta').get())
+    const pull = fn => fn().then(() => CLOUD.db.collection('csl').doc('_meta').get());
+    return pull(authSuper)
+      .catch(e => {
+        if (e.message !== 'auth-failed') throw e;
+        /* حساب الموزّع متسجل بباسورد قديمة → نقرأ _meta بحساب قارئ مؤقت */
+        return pull(authSuperReader);
+      })
       .then(snap => {
         CLOUD.metaErr = null;
         if (!snap.exists) { cloudPushMeta(); return; }
