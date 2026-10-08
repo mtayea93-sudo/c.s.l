@@ -26,7 +26,8 @@
     labTimer: null, metaTimer: null,
     authLab: null,     // معمل آخر عملنا login لحسابه
     authSuper: false,
-    authing: null      // وعد المصادقة الجاري
+    authing: null,     // وعد المصادقة الجاري
+    metaErr: null      // سبب آخر فشل في سحب بيانات الموزّع (عربي، يظهر عند الدخول بالكود)
   };
   window.CLOUD = CLOUD;
 
@@ -273,6 +274,37 @@
     };
   };
 
+  function metaErrText(e) {
+    if (!e) return 'تعذّر الاتصال بالسحابة';
+    if (e.message === 'auth-provider-disabled') return 'فعّل «البريد الإلكتروني/كلمة السر» من Firebase Console ← Authentication ← Sign-in method';
+    if (e.message === 'auth-failed') return 'حساب الموزّع على Firebase مش متطابق — امسحه من Authentication ← Users وسيتعمل تلقائياً';
+    if (e.code === 'permission-denied') return 'انشر ملف firestore.rules من الريبو في Firebase Console ← Firestore ← Rules ← Publish';
+    if (e.code === 'auth/network-request-failed' || (e.message && e.message.indexOf('network') >= 0) || e.message === 'offline') return 'مفيش نت على الجهاز ده';
+    return 'تعذّر سحب بيانات الموزّع من السحابة';
+  }
+  window.metaErrText = metaErrText;
+
+  /* سحب واحد بـ promise — بيرمي الخطأ لو فشل */
+  window.cloudPullMetaAwait = function () {
+    if (!CLOUD.ok || !META) return Promise.reject(new Error('offline'));
+    return authSuper()
+      .then(() => CLOUD.db.collection('csl').doc('_meta').get())
+      .then(snap => {
+        CLOUD.metaErr = null;
+        if (!snap.exists) { cloudPushMeta(); return; }
+        const remote = snap.data();
+        if (remote.updatedAt === CLOUD.lastMetaPush) return;
+        const remoteData = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
+        if (JSON.stringify(remoteData) !== JSON.stringify(META)) {
+          CLOUD.lastMetaApplied = JSON.stringify(remoteData);
+          META = remoteData;
+          saveMeta();
+          if (session() && session().type === 'super') route();
+        }
+      })
+      .catch(e => { CLOUD.metaErr = metaErrText(e); throw e; });
+  };
+
   window.cloudPullMeta = function () {
     if (!CLOUD.ok || !META) return;
     authSuper().then(() => CLOUD.db.collection('csl').doc('_meta').get()).then(snap => {
@@ -298,7 +330,7 @@
           if (session() && session().type === 'super') route();
         }
       }, () => {});
-    }).catch(e => console.error('meta pull:', e));
+    }).catch(e => { CLOUD.metaErr = metaErrText(e); console.error('meta pull:', e); });
   };
 
   /* خروج المصادقة السحابية عند تسجيل الخروج من النظام */
