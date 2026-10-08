@@ -1,7 +1,7 @@
 /* ============================================================
-   «المعمل» — نسخة يسير كاملة داخل CSL
+   «المعمل» — نظام المختبر الكامل داخل CSL
    استقبال / نتائج / إعدادات (تحاليل + باراميترات + عينات)
-   بياناتها من YS (yaseer-data.js) وتعديلاتها بتتحفظ في DB.yset
+   بياناتها من YS (lab-data.js) وتعديلاتها بتتحفظ في DB.yset
    ============================================================ */
 'use strict';
 let lyTab = 'rec';
@@ -105,7 +105,7 @@ function renderLabops(sub) {
   if (sub) lyTab = sub;
   if (!['rec', 'res', 'set'].includes(lyTab)) lyTab = 'rec';
   const tabs = [['rec', '🧾 استقبال'], ['res', '🧪 نتائج'], ['set', '⚙️ إعدادات المعمل']];
-  shell('المعمل — بنظام يسير', `
+  shell('المعمل — نظام CSL', `
     <div class="ly-tabs">${tabs.map(t => `<button class="ly-tab ${lyTab === t[0] ? 'on' : ''}" onclick="go('labops/${t[0]}')">${t[1]}</button>`).join('')}</div>
     <div id="ly-body"></div>`);
   if (lyTab === 'rec') lyRenderRec();
@@ -114,7 +114,7 @@ function renderLabops(sub) {
 }
 
 /* ============================================================
-   1) الاستقبال — شاشة يسير: بيانات المريض + الفحوصات + شريط الإجمالي
+   1) الاستقبال: بيانات المريض + الفحوصات + شريط الإجمالي
    ============================================================ */
 let lyRecState = { patientId: null, pids: [], q: '', gid: 0, plan: 'أسعار أساسية', referrer: 'Self referral' };
 
@@ -284,7 +284,7 @@ function lyInvoice(visitId) {
 }
 
 /* ============================================================
-   2) النتائج — بحث بالكود + حالات الفحوصات + إدخال النتائج + تقرير يسير
+   2) النتائج — بحث بالكود + حالات الفحوصات + إدخال النتائج + تقرير نتائج
    ============================================================ */
 let lyRes = { q: '', visitId: null, pid: null };
 
@@ -372,7 +372,7 @@ function lyToggleDone(visitId, pid) {
   if (i >= 0) v.donePids.splice(i, 1); else v.donePids.push(pid);
   save(); lyRenderRes();
 }
-/* تقرير يسير GenericReport — نفس شكل الطباعة */
+/* تقرير النتائج GenericReport — نفس شكل الطباعة */
 function lyReport(visitId, onlyPid) {
   const v = yVisits().find(x => x.id === visitId);
   const p = yPatients().find(x => x.id === v.patientId);
@@ -461,7 +461,7 @@ function lyReport(visitId, onlyPid) {
 }
 
 /* ============================================================
-   3) إعدادات المعمل — نسخة يسير الكاملة: تحاليل + باراميترات + عينات
+   3) إعدادات المعمل الكاملة: تحاليل + باراميترات + عينات
    ============================================================ */
 let lySet = { tab: 'tests', q: '', gid: 0, pid: null, tid: null, sid: null };
 
@@ -661,7 +661,7 @@ function lyDelTest(tid) {
 }
 function lyResetTest(tid) { delete yset().tests[tid]; delete yset().ranges[tid]; save(); lySetParams(); toast('↩️ تم استرجاع الأصل'); }
 
-/* ---- العينات: قائمة يسير كاملة + إضافة/تعديل محلي ---- */
+/* ---- العينات: قائمة العينات الكاملة + إضافة/تعديل محلي ---- */
 function lySetSamples() {
   const st = lySet;
   const over = yset().samples;
@@ -669,14 +669,14 @@ function lySetSamples() {
   $('#ly-set-body').innerHTML = `
   <div class="ly-set-grid">
     <div class="card">
-      <h3>🧫 العينات (${list.length}) — نفس قائمة يسير</h3>
+      <h3>🧫 العينات (${list.length}) — القائمة الكاملة</h3>
       <div class="ly-testlist tall">
         ${list.map(s => `<div class="ly-testrow ${st.sid === s.sample_code ? 'sel' : ''}" onclick="lySet.sid=${s.sample_code};lySetSamples()">
           <div class="ly-tr-name">${esc(s.sample_name)} ${over[s.sample_code] ? '<span class="pill ok">معدّل</span>' : ''}</div>
           <div class="num">${esc(s.tube_size)}</div></div>`).join('')}
       </div>
       <button class="btn btn-g" style="margin-top:8px" onclick="lyNewSample()">➕ عينة جديدة</button>
-      <div class="mut" style="font-size:12px;margin-top:8px">عينات جديدة بتتخزن محلياً ومتتظهرش في يسير — زي ما بيعمل يسير بالظبط (عينات فرعية).</div>
+      <div class="mut" style="font-size:12px;margin-top:8px">عينات جديدة بتتخزن محلياً ومتتظهرش في النظام المركزي — زي النظام الأصلي بالظبط (عينات فرعية).</div>
     </div>
     <div class="card">${st.sid ? lySampleEditor(st.sid) : '<div class="mut" style="text-align:center;padding:30px">اختار عينة من القايمة</div>'}</div>
   </div>`;
@@ -695,7 +695,7 @@ function lySampleEditor(sc) {
     <button class="btn btn-p" onclick="lySaveSample(${sc})">💾 حفظ العينة</button>
     ${yset().samples[sc] ? `<button class="btn btn-g" onclick="delete yset().samples[${sc}];save();lySetSamples();toast('↩️ تم الاسترجاع')">↩️ استرجاع الأصل</button>` : ''}
   </div>
-  <div class="mut" style="margin-top:10px;font-size:12px">العينات المستوردة من يسير: ${YS.samples.length} عينة بأكوادها الأصلية.</div>`;
+  <div class="mut" style="margin-top:10px;font-size:12px">العينات المستوردة من النظام: ${YS.samples.length} عينة بأكوادها الأصلية.</div>`;
 }
 function lyNewSample() {
   const sc = Math.max(...YS.samples.map(s => s.sample_code), 99) + 1 + Object.keys(yset().samples).filter(k => !YS.samples.find(s => s.sample_code == k)).length;
@@ -707,10 +707,10 @@ function lySaveSample(sc) {
   save(); toast('✅ تم حفظ العينة'); lySetSamples();
 }
 
-/* ---- خطط الأسعار: عرض خطط يسير ---- */
+/* ---- خطط الأسعار ---- */
 function lySetPlans() {
   $('#ly-set-body').innerHTML = `<div class="card">
-    <h3>💳 خطط الأسعار في يسير (${YS.priceplans.length})</h3>
+    <h3>💳 خطط الأسعار (${YS.priceplans.length})</h3>
     <div class="ly-testlist tall">
       ${YS.priceplans.map(p => `<div class="ly-testrow"><div class="ly-tr-name">${esc(p.rank_name)}<br><span class="en mut">${p.percent}% • ${p.type === 2 ? 'نسبة' : 'ثابت'}</span></div></div>`).join('')}
     </div>
