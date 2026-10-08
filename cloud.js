@@ -108,6 +108,8 @@
     for (const p of [su.pass, ...LEGACY]) {
       try { await signIn(p); ok = true; if (p !== su.pass) { try { await CLOUD.auth.currentUser.updatePassword(su.pass); } catch (e) {} } break; }
       catch (e) {
+        if (e.code === 'auth/network-request-failed') throw new Error('offline');
+        if (e.code === 'auth/operation-not-allowed') throw new Error('auth-provider-disabled');
         if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-login-credentials') {
           try { await create(p); ok = true; break; } catch (e2) { /* email-in-use → جرّب اللي بعده */ }
         }
