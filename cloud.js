@@ -308,7 +308,7 @@
   function metaErrText(e) {
     if (!e) return 'تعذّر الاتصال بالسحابة';
     if (e.message === 'auth-provider-disabled') return 'فعّل «البريد الإلكتروني/كلمة السر» من Firebase Console ← Authentication ← Sign-in method';
-    if (e.message === 'auth-failed') return 'حساب الموزّع على Firebase مش متطابق — امسحه من Authentication ← Users وسيتعمل تلقائياً';
+    if (e.message === 'auth-failed') return 'مشكلة في حسابات Firebase — امسح كل المستخدمين من Authentication ← Users وفعّل Email/Password وحاول تاني';
     if (e.code === 'permission-denied') return 'انشر ملف firestore.rules من الريبو في Firebase Console ← Firestore ← Rules ← Publish';
     if (e.code === 'auth/network-request-failed' || (e.message && e.message.indexOf('network') >= 0) || e.message === 'offline') return 'مفيش نت على الجهاز ده';
     return 'تعذّر سحب بيانات الموزّع من السحابة';
