@@ -186,7 +186,16 @@ async function doLabLogin() {
     const c = ($('#lg-code')?.value || '').trim().toLowerCase();
     if (!c) return toast('⚠️ أدخل كود التفعيل');
     lab = META.labs.find(l => l.code === c);
-    if (!lab) return toast('⚠️ كود التفعيل غير صحيح');
+    if (!lab && typeof cloudPullMetaAwait === 'function' && window.CLOUD && CLOUD.ok) {
+      /* الكود مش معروف محلياً — نسحب بيانات الموزّع من السحابة ونجرب تاني */
+      toast('⏳ بجيب بيانات الموزّع من السحابة…');
+      try { await cloudPullMetaAwait(); } catch (e) { /* metaErr اتسجل */ }
+      lab = META.labs.find(l => l.code === c);
+    }
+    if (!lab) {
+      const why = (window.CLOUD && CLOUD.metaErr) ? ' (' + CLOUD.metaErr + ')' : '';
+      return toast('⚠️ كود التفعيل غير صحيح' + why);
+    }
   }
   if (!lab.active) return toast('⚠️ المعمل موقوف — تواصل مع الموزّع');
   const dbRaw = (DB && LABID === lab.id) ? DB : JSON.parse(localStorage.getItem(labKey(lab.id)) || 'null');
