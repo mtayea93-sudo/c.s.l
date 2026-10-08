@@ -6,7 +6,7 @@ const CORE = [
   './manifest.webmanifest',
   './catalog.js',
   './security.js',
-  './yaseer-data.js',
+  './lab-data.js',
   './cloud.js',
   './app.js',
   './labops.js',
