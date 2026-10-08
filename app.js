@@ -347,7 +347,7 @@ function renderHome() {
   const ses = session();
   const casaOn = !!labById(LABID)?.casa;
   const tiles = [
-    ['labops', 'المعمل', 'استقبال + نتائج + إعدادات (تحاليل/باراميترات/عينات) — بنظام يسير', '🏥', '#0b5bd3'],
+    ['labops', 'المعمل', 'استقبال + نتائج + إعدادات (تحاليل/باراميترات/عينات) — بنظام CSL الكامل', '🏥', '#0b5bd3'],
     ['casa', 'CASA', casaOn ? 'تحليل السائل المنوي — مفعّل ✓ بيفتح على موقعنا casa.mtayea.com في تبويب جديد' : 'تحليل السائل المنوي — غير مفعّل للمعمل ده، هيُفتح موقع CASA عادي وتقدر تفعّله هناك', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
@@ -476,7 +476,7 @@ function recNewPatient() {
       <button class="btn btn-o" onclick="closeModal()">إلغاء</button>
     </div>`);
 }
-/* سن ↔ تاريخ ميلاد (زي يسير) */
+/* سن ↔ تاريخ ميلاد (محسوبة تلقائياً) */
 function npAgeToDob() {
   const y = +$('#np-age').value || 0; if (!y) return;
   const n = new Date(); const d = new Date(n.getFullYear() - y, n.getMonth(), n.getDate());
@@ -714,7 +714,7 @@ function resSave(visitId, idx, report) {
   resPickPat();
   if (report) resReport(visitId);
 }
-/* تقرير نتائج قابل للطباعة — بنفس شكل يسير (GenericReport) */
+/* تقرير نتائج قابل للطباعة — نفس شكل تقارير المختبر (GenericReport) */
 function resReport(visitId, onlyIdx) {
   const v = DB.visits.find(x => x.id === visitId); const p = patById(v.patientId); const h = DB.lab.header || {};
   let doneTests = v.tests.filter(t => t.status === 'done');
