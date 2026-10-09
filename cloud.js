@@ -150,6 +150,27 @@
   }
   window.authSuperReader = authSuperReader;
 
+  /* دمج بيانات الموزّع القادمة من السحابة — السحابة الفاضية متمسحش بيها المعاملات المحلية */
+  function applyMetaRemote(remoteData) {
+    if (!META) { META = remoteData; try { saveMeta(); } catch (e) {} return true; }
+    const rLabs = Array.isArray(remoteData && remoteData.labs) ? remoteData.labs : [];
+    const lLabs = Array.isArray(META.labs) ? META.labs : [];
+    let changed = false;
+    if (rLabs.length === 0 && lLabs.length > 0) {
+      /* السحابة فاضية/قديمة والجهاز فيه معاملات: احتفظ بمعاملاتك وارفعها للسحابة */
+      const merged = Object.assign({}, remoteData, { labs: lLabs });
+      if (JSON.stringify(merged) !== JSON.stringify(META)) { META = merged; changed = true; }
+      setTimeout(() => { try { cloudPushMeta(); } catch (e) {} }, 1500);
+    } else if (JSON.stringify(remoteData) !== JSON.stringify(META)) {
+      META = remoteData; changed = true;
+    }
+    if (changed) {
+      CLOUD.lastMetaApplied = JSON.stringify(META);
+      try { saveMeta(); } catch (e) {}
+    }
+    return changed;
+  }
+
   /* ---------- دفع بيانات (مع منع الحلقات) ---------- */
   async function cloudPushLab() {
     if (!CLOUD.ok || !LABID || !DB) return;
@@ -188,7 +209,8 @@
     if (payload === CLOUD.lastMetaApplied) return;
     const at = new Date().toISOString();
     try {
-      await authSuper();
+      try { await authSuper(); }
+      catch (e) { if (e.message !== 'auth-failed') throw e; await authSuperReader(); }
       CLOUD.lastMetaPush = at;
       CLOUD.lastMetaApplied = payload;
       await CLOUD.db.collection('csl').doc('_meta').set({ dataJson: payload, updatedAt: at });
@@ -331,12 +353,7 @@
         const remote = snap.data();
         if (remote.updatedAt === CLOUD.lastMetaPush) return;
         const remoteData = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
-        if (JSON.stringify(remoteData) !== JSON.stringify(META)) {
-          CLOUD.lastMetaApplied = JSON.stringify(remoteData);
-          META = remoteData;
-          saveMeta();
-          if (session() && session().type === 'super') route();
-        }
+        if (applyMetaRemote(remoteData) && session() && session().type === 'super') route();
       })
       .catch(e => { CLOUD.metaErr = metaErrText(e); throw e; });
   };
@@ -348,23 +365,14 @@
       const remote = snap.data();
       if (remote.updatedAt === CLOUD.lastMetaPush) return;
       const remoteData = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
-      if (JSON.stringify(remoteData) !== JSON.stringify(META)) {
-        CLOUD.lastMetaApplied = JSON.stringify(remoteData);
-        META = remoteData;
-        saveMeta();
-        if (session() && session().type === 'super') route();
-      }
+      if (applyMetaRemote(remoteData) && session() && session().type === 'super') route();
       if (CLOUD.metaUnsub) CLOUD.metaUnsub();
       CLOUD.metaUnsub = CLOUD.db.collection('csl').doc('_meta').onSnapshot(s => {
         if (!s.exists) return;
         const r = s.data();
         if (r.updatedAt === CLOUD.lastMetaPush) return;
         const rData = r.dataJson ? JSON.parse(r.dataJson) : r.data;
-        if (JSON.stringify(rData) !== JSON.stringify(META)) {
-          CLOUD.lastMetaApplied = JSON.stringify(rData);
-          META = rData; saveMeta();
-          if (session() && session().type === 'super') route();
-        }
+        if (applyMetaRemote(rData) && session() && session().type === 'super') route();
       }, () => {});
     }).catch(e => { CLOUD.metaErr = metaErrText(e); console.error('meta pull:', e); });
   };
