@@ -303,7 +303,7 @@ function lyRenderRes() {
       <input class="inp2" placeholder="كود الحالة / اسم المريض / تليفون" value="${esc(st.q)}" oninput="lyRes.q=this.value;lyRenderRes();setTimeout(()=>{const el=$('#ly-res-q');el&&el.focus()},0)" id="ly-res-q">
       <div class="ly-testlist" style="margin-top:8px">
         ${list.map(x => `<div class="ly-testrow ${st.visitId === x.id ? 'sel' : ''}" onclick="lyRes.visitId='${x.id}';lyRes.pid=null;lyRenderRes()">
-          <div class="ly-tr-name">${esc(yPatients().find(pp => pp.id === x.patientId)?.name || '')} <span class="en num">${x.code}</span></div>
+          <div class="ly-tr-name">${x.src === 'casa' ? '🖥️ ' : ''}${esc(yPatients().find(pp => pp.id === x.patientId)?.name || '')} <span class="en num">${x.code}</span></div>
           <div>${x.date} ${x.time}</div></div>`).join('') || '<div class="mut" style="padding:12px;text-align:center">لا توجد حالات — سجّل من الاستقبال أولاً</div>'}
       </div>
       ${v ? `<div class="ly-testlist" style="margin-top:10px;border-top:2px solid var(--line);padding-top:8px">
@@ -312,6 +312,7 @@ function lyRenderRes() {
             <div class="ly-tr-name">${esc(x.arabic_name || x.report_name)}</div>
             <span class="pill ${done ? 'ok' : 'warn'}">${done ? 'تم' : 'معلق'}</span></div>`; }).join('')}
       </div>` : ''}
+      ${v ? `<button class="btn btn-g" style="width:100%;margin-top:10px" onclick="lyReport('${v.id}')">🖨️ تقرير مجمع — كل الفحوصات المعتمدة</button>` : ''}
     </div>
     <div class="card" id="ly-work">${v && st.pid ? lyWorkHtml(v, p, st.pid) : '<div class="mut" style="text-align:center;padding:30px">اختار حالة ثم فحص لإدخال النتائج</div>'}</div>
   </div>`;
