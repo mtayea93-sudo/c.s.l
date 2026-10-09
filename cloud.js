@@ -150,19 +150,22 @@
   }
   window.authSuperReader = authSuperReader;
 
-  /* دمج بيانات الموزّع القادمة من السحابة — السحابة الفاضية متمسحش بيها المعاملات المحلية */
+  /* دمج بيانات الموزّع القادمة من السحابة: القايمتين بيدمجوا مع بعض —
+     معاملات الجهاز متمسحش، والنسخة الأحدث من نفس المعمل هي اللي تكسب */
   function applyMetaRemote(remoteData) {
     if (!META) { META = remoteData; try { saveMeta(); } catch (e) {} return true; }
     const rLabs = Array.isArray(remoteData && remoteData.labs) ? remoteData.labs : [];
     const lLabs = Array.isArray(META.labs) ? META.labs : [];
     let changed = false;
-    if (rLabs.length === 0 && lLabs.length > 0) {
-      /* السحابة فاضية/قديمة والجهاز فيه معاملات: احتفظ بمعاملاتك وارفعها للسحابة */
-      const merged = Object.assign({}, remoteData, { labs: lLabs });
-      if (JSON.stringify(merged) !== JSON.stringify(META)) { META = merged; changed = true; }
+    const byId = {};
+    lLabs.forEach(l => { byId[l.id] = l; });
+    rLabs.forEach(l => { byId[l.id] = l; }); /* نسخة السحابة تكسب عند التعارض */
+    const mergedLabs = Object.values(byId);
+    const merged = Object.assign({}, remoteData, { labs: mergedLabs });
+    if (JSON.stringify(merged) !== JSON.stringify(META)) { META = merged; changed = true; }
+    if (mergedLabs.length > rLabs.length) {
+      /* في معاملات محلية مش على السحابة: ارفع القايمة المدموجة */
       setTimeout(() => { try { cloudPushMeta(); } catch (e) {} }, 1500);
-    } else if (JSON.stringify(remoteData) !== JSON.stringify(META)) {
-      META = remoteData; changed = true;
     }
     if (changed) {
       CLOUD.lastMetaApplied = JSON.stringify(META);
@@ -214,7 +217,8 @@
       CLOUD.lastMetaPush = at;
       CLOUD.lastMetaApplied = payload;
       await CLOUD.db.collection('csl').doc('_meta').set({ dataJson: payload, updatedAt: at });
-    } catch (e) { console.error('Meta push:', e); }
+      updateSyncBadge('ok', '☁️ متزامن مع السحابة');
+    } catch (e) { console.error('Meta push:', e); updateSyncBadge('err', '⚠️ المزامنة فشلت — محفوظ محلياً'); }
   }
 
   window.cloudSchedulePush = function () {
@@ -349,6 +353,7 @@
       })
       .then(snap => {
         CLOUD.metaErr = null;
+        updateSyncBadge('ok', '☁️ متزامن مع السحابة');
         if (!snap.exists) { try { Promise.resolve(cloudPushMeta()).catch(() => {}); } catch (e) {} return; }
         const remote = snap.data();
         if (remote.updatedAt === CLOUD.lastMetaPush) return;
@@ -374,7 +379,7 @@
         const rData = r.dataJson ? JSON.parse(r.dataJson) : r.data;
         if (applyMetaRemote(rData) && session() && session().type === 'super') route();
       }, () => {});
-    }).catch(e => { CLOUD.metaErr = metaErrText(e); console.error('meta pull:', e); });
+    }).catch(e => { CLOUD.metaErr = metaErrText(e); console.error('meta pull:', e); updateSyncBadge('err', '⚠️ ' + CLOUD.metaErr); });
   };
 
   /* خروج المصادقة السحابية عند تسجيل الخروج من النظام */
