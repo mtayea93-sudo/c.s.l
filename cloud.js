@@ -319,15 +319,15 @@
   window.cloudPullMetaAwait = function () {
     if (!CLOUD.ok || !META) return Promise.reject(new Error('offline'));
     const pull = fn => fn().then(() => CLOUD.db.collection('csl').doc('_meta').get());
-    return pull(authSuper)
+    /* القارئ المؤقت هو الأساس: شغال حتى لو حساب الموزّع متسجل بباسورد قديمة */
+    return pull(authSuperReader)
       .catch(e => {
         if (e.message !== 'auth-failed') throw e;
-        /* حساب الموزّع متسجل بباسورد قديمة → نقرأ _meta بحساب قارئ مؤقت */
-        return pull(authSuperReader);
+        return pull(authSuper);
       })
       .then(snap => {
         CLOUD.metaErr = null;
-        if (!snap.exists) { cloudPushMeta(); return; }
+        if (!snap.exists) { try { Promise.resolve(cloudPushMeta()).catch(() => {}); } catch (e) {} return; }
         const remote = snap.data();
         if (remote.updatedAt === CLOUD.lastMetaPush) return;
         const remoteData = remote.dataJson ? JSON.parse(remote.dataJson) : remote.data;
