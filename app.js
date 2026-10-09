@@ -1540,3 +1540,15 @@ function stImport(inp) {
 }
 
 route();
+
+
+/* ===== الدخول التلقائي من لوحة التحكم الموحّدة (m-tayea.mtayea.com/panel) ===== */
+window.addEventListener('message', function (e) {
+  var d = e.data || {};
+  if (d.mt !== 'sso') return;
+  if (typeof window.MT_SSO_HANDLE === 'function') window.MT_SSO_HANDLE(d);
+});
+window.MT_SSO_HANDLE = function (d) {
+  if (d.site !== 'csl') return;
+  try { setSession({ type: 'super', name: 'الموزّع' }); go(''); route(); } catch (e) {}
+};
