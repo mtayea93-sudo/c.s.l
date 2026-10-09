@@ -244,7 +244,7 @@ function renderDistributor() {
         <td style="font-weight:700">${esc(l.name)}</td>
         <td class="num"><b>${l.code}</b></td>
         <td class="num" style="font-size:11.5px">csl.mtayea.com/#/go/${l.id}</td>
-        <td>${l.active ? '<span class="pill p-paid">نشط</span>' : '<span class="pill p-unpaid">موقوف</span>'} ${l.casa ? '<span class="pill p-paid">CASA ✓</span>' : '<span class="pill p-unpaid">CASA ✗</span>'}</td>
+        <td>${l.active ? '<span class="pill p-paid">نشط</span>' : '<span class="pill p-unpaid">موقوف</span>'} ${l.casa ? '<span class="pill p-paid">CASA ✓</span>' : '<span class="pill p-unpaid">CASA ✗</span>'}${l.casa ? `<div class="mut" style="font-size:10px">id: ${l.id}</div>` : ''}</td>
         <td>
           <button class="btn btn-o btn-s" onclick="distToggle('${l.id}')">${l.active ? 'إيقاف' : 'تفعيل'}</button>
           <button class="btn btn-t btn-s" onclick="distCasa('${l.id}')">${l.casa ? 'إيقاف CASA' : 'تفعيل CASA'}</button>
