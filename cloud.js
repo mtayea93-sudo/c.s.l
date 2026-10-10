@@ -113,6 +113,7 @@
         if (e.code === 'auth/user-not-found' || e.code === 'auth/invalid-credential' || e.code === 'auth/invalid-login-credentials') {
           try { await create(p); ok = true; break; } catch (e2) { /* email-in-use → جرّب اللي بعده */ }
         }
+        if (e.code === 'auth/too-many-requests') throw new Error('auth-throttled');
         /* wrong-password → جرّب اللي بعده */
       }
     }
@@ -137,6 +138,7 @@
     const fail = e => {
       if (e.code === 'auth/network-request-failed') throw new Error('offline');
       if (e.code === 'auth/operation-not-allowed') throw new Error('auth-provider-disabled');
+      if (e.code === 'auth/too-many-requests') throw new Error('auth-throttled');
       throw new Error('auth-failed');
     };
     const save = () => {
@@ -336,6 +338,7 @@
     if (!e) return 'تعذّر الاتصال بالسحابة';
     if (e.message === 'auth-provider-disabled') return 'فعّل «البريد الإلكتروني/كلمة السر» من Firebase Console ← Authentication ← Sign-in method';
     if (e.message === 'auth-failed') return 'مشكلة في حسابات Firebase — امسح كل المستخدمين من Authentication ← Users وفعّل Email/Password وحاول تاني';
+    if (e.code === 'auth/too-many-requests' || e.message === 'auth-throttled') return 'جوجل حظرت المحاولات مؤقتاً من النت ده بسبب محاولات كتير — استنى ساعة من غير ما تفتح الموقع خالص، وبعدين افتحه مرة واحدة بس';
     if (e.code === 'permission-denied') return 'انشر ملف firestore.rules من الريبو في Firebase Console ← Firestore ← Rules ← Publish';
     if (e.code === 'auth/network-request-failed' || (e.message && e.message.indexOf('network') >= 0) || e.message === 'offline') return 'مفيش نت على الجهاز ده';
     return 'تعذّر سحب بيانات الموزّع من السحابة';
