@@ -153,6 +153,7 @@
   /* دمج بيانات الموزّع القادمة من السحابة: القايمتين بيدمجوا مع بعض —
      معاملات الجهاز متمسحش، والنسخة الأحدث من نفس المعمل هي اللي تكسب */
   function applyMetaRemote(remoteData) {
+    if (!remoteData || typeof remoteData !== 'object' || Array.isArray(remoteData)) return false;
     if (!META) { META = remoteData; try { saveMeta(); } catch (e) {} return true; }
     const rLabs = Array.isArray(remoteData && remoteData.labs) ? remoteData.labs : [];
     const lLabs = Array.isArray(META.labs) ? META.labs : [];
@@ -365,7 +366,10 @@
 
   window.cloudPullMeta = function () {
     if (!CLOUD.ok || !META) return;
-    authSuper().then(() => CLOUD.db.collection('csl').doc('_meta').get()).then(snap => {
+    const pullM = fn => fn().then(() => CLOUD.db.collection('csl').doc('_meta').get());
+    pullM(authSuperReader)
+      .catch(e => { if (e.message !== 'auth-failed') throw e; return pullM(authSuper); })
+      .then(snap => {
       if (!snap.exists) { cloudPushMeta(); return; }
       const remote = snap.data();
       if (remote.updatedAt === CLOUD.lastMetaPush) return;
