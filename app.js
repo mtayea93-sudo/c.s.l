@@ -1539,7 +1539,7 @@ function stImport(inp) {
   r.readAsText(f);
 }
 
-route();
+loadMeta(); route();
 
 
 /* ===== الدخول التلقائي من لوحة التحكم الموحّدة (m-tayea.mtayea.com/panel) ===== */
