@@ -46,7 +46,7 @@ function loadMeta() {
   if (!META || !META.labs) { META = { superUser: { user: 'mt', pass: 'mhmd@1993' }, labs: [] }; saveMeta(); }
   else if (META.superUser && META.superUser.pass === 'mozo') { META.superUser.pass = 'mhmd@1993'; saveMeta(); }
 }
-function saveMeta() { localStorage.setItem(META_KEY, JSON.stringify(META)); if (typeof cloudScheduleMetaPush === 'function') cloudScheduleMetaPush(); }
+function saveMeta() { if (!META || typeof META !== 'object' || !Array.isArray(META.labs)) META = { superUser: { user: 'mt', pass: 'mhmd@1993' }, labs: [] }; localStorage.setItem(META_KEY, JSON.stringify(META)); if (typeof cloudScheduleMetaPush === 'function') cloudScheduleMetaPush(); }
 function labById(id) { return META.labs.find(l => l.id === id); }
 function isActivated(id) { return localStorage.getItem(actKey(id)) === '1'; }
 function activate(id) { localStorage.setItem(actKey(id), '1'); }
