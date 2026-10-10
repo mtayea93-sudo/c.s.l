@@ -56,6 +56,8 @@
   };
 
   window.cloudInit = function () {
+    if (CLOUD._init) return;
+    CLOUD._init = true;
     CLOUD.ok = true;
     window.addEventListener('online', onBackOnline);
     window.addEventListener('offline', () => updateSyncBadge());
