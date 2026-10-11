@@ -4,7 +4,7 @@
 <!-- 🔄 تحديث إجباري: أي جهاز يفتح نسخة قديمة بيتحدّث فوراً -->
 <script>
 (function () {
-  var V = 'csl-2026-10-12b';
+  var V = 'csl-2026-10-12c';
   window.APP_VERSION = V;
   function nukedReload() {
     if (window.__nuking) return; window.__nuking = true;
@@ -192,7 +192,7 @@ tr:nth-child(even) td{background:#f8fafd}
 <script src="lab-data.js"></script>
 <script src="security.js"></script>
 <script src="cloud.js"></script>
-<script src="app.js?v=csl-2026-10-12b"></script>
+<script src="app.js?v=csl-2026-10-12c"></script>
 <script src="labops.js"></script>
 <script src="https://m-tayea.mtayea.com/signature/mtayea-signature.js"></script>
 <script>
@@ -201,6 +201,31 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW:', err));
   });
 }
+</script>
+<!-- 🛡️ حارس الشاشة البيضا: لو الصفحة فضيت بعد التحميل، بيشفي نفسه تلقائياً -->
+<script>
+(function () {
+  function isBlank() {
+    var a = document.getElementById('app');
+    var txt = (document.body.innerText || '').trim();
+    return (!a || !a.innerHTML.trim()) && txt.length === 0;
+  }
+  function heal() {
+    if (sessionStorage.getItem('csl_healed') === '1') {
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0d1b3e;color:#fff;font-family:sans-serif;z-index:99999;text-align:center;padding:20px;';
+      d.innerHTML = '<div><div style="font-size:40px;margin-bottom:10px;">⚠️</div>حصلت مشكلة في التحميل<br><br><button onclick="sessionStorage.removeItem(\'csl_healed\');location.reload();" style="padding:12px 28px;font-size:16px;border:none;border-radius:8px;background:#e9b44c;color:#0d1b3e;cursor:pointer;font-weight:bold;">🔄 حاول تاني</button></div>';
+      document.body.appendChild(d);
+      return;
+    }
+    sessionStorage.setItem('csl_healed', '1');
+    if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
+    if ('caches' in window) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
+    setTimeout(function () { location.replace(location.pathname + '?mtu=' + Date.now() + location.hash); }, 400);
+  }
+  window.addEventListener('load', function () { setTimeout(function () { if (isBlank()) heal(); }, 2500); });
+  window.addEventListener('error', function (e) { setTimeout(function () { if (isBlank()) heal(); }, 300); });
+})();
 </script>
 </body>
 </html>
