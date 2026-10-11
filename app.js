@@ -46,7 +46,16 @@ function loadMeta() {
   if (!META || !META.labs) { META = { superUser: { user: 'mt', pass: 'mhmd@1993' }, labs: [] }; saveMeta(); }
   else if (META.superUser && META.superUser.pass === 'mozo') { META.superUser.pass = 'mhmd@1993'; saveMeta(); }
 }
-function saveMeta() { if (!META || typeof META !== 'object' || !Array.isArray(META.labs)) META = { superUser: { user: 'mt', pass: 'mhmd@1993' }, labs: [] }; localStorage.setItem(META_KEY, JSON.stringify(META)); if (typeof cloudScheduleMetaPush === 'function') cloudScheduleMetaPush(); }
+/* وضع المعاينة: جلسة read-only — بنمنع أي حفظ أو رفع للسحابة */
+let __roWarnAt = 0;
+function roBlocked() {
+  const s = session();
+  if (!s || !s.ro) return false;
+  const n = Date.now();
+  if (n - __roWarnAt > 4000) { __roWarnAt = n; toast('👁️ وضع المعاينة — للمشاهدة فقط، ممنوع التعديل'); }
+  return true;
+}
+function saveMeta() { if (roBlocked()) return; if (!META || typeof META !== 'object' || !Array.isArray(META.labs)) META = { superUser: { user: 'mt', pass: 'mhmd@1993' }, labs: [] }; localStorage.setItem(META_KEY, JSON.stringify(META)); if (typeof cloudScheduleMetaPush === 'function') cloudScheduleMetaPush(); }
 function labById(id) { return META.labs.find(l => l.id === id); }
 function isActivated(id) { return localStorage.getItem(actKey(id)) === '1'; }
 function activate(id) { localStorage.setItem(actKey(id), '1'); }
@@ -58,7 +67,7 @@ function rememberLab(l) {
   list.unshift({ id: l.id, name: l.name });
   localStorage.setItem(MYLABS_KEY, JSON.stringify(list.slice(0, 20)));
 }
-function save() { if (LABID) localStorage.setItem(labKey(LABID), JSON.stringify(DB)); if (typeof cloudSchedulePush === 'function') cloudSchedulePush(); }
+function save() { if (roBlocked()) return; if (LABID) localStorage.setItem(labKey(LABID), JSON.stringify(DB)); if (typeof cloudSchedulePush === 'function') cloudSchedulePush(); }
 function loadLab(id) {
   LABID = id;
   try { DB = JSON.parse(localStorage.getItem(labKey(id))); } catch (e) { DB = null; }
@@ -118,6 +127,7 @@ function shell(title, bodyHtml) {
     <button class="icon-btn" onclick="logout()" title="خروج">⏻</button>
   </div>
   <div id="view">
+    ${ses.ro ? '<div style="background:#fff8e6;color:#8a6d1a;padding:8px 14px;font-size:13px;font-weight:700;text-align:center;border-bottom:1px solid #f0dfae">👁️ وضع المعاينة — تفرّج على كل حاجة، ممنوع الإضافة أو التعديل أو الحذف</div>' : ''}
     <div class="page-head"><button class="back" onclick="go('home')">→</button><h2>${esc(title)}</h2></div>
     ${bodyHtml}
   </div>`;
@@ -136,6 +146,7 @@ function renderLogin() {
       <button class="btn ${loginMode === 'super' ? 'btn-p' : 'btn-o'}" onclick="loginTab('super')">دخول الموزّع</button>
     </div>
     <div id="login-body"></div>
+    <button class="btn btn-o" style="width:100%;margin-top:12px" onclick="demoLogin()">👁️ دخول تجريبي — معاينة فقط</button>
   </div></div>`;
   loginTab(loginMode);
 }
@@ -163,6 +174,45 @@ function loginTab(m) {
     <div class="field"><label>كلمة المرور</label><input class="inp" type="password" id="lg-pass"></div>
     <button class="btn btn-p" onclick="doLabLogin()">دخول ⬅</button>`;
   })();
+}
+/* دخول تجريبي: معمل demo ببيانات جاهزة — الجلسة read-only (مفيش حفظ ولا رفع) */
+function demoLogin() {
+  const sess = { type: 'lab', labId: 'lab_demo', name: 'زائر تجريبي', role: 'معاينة', user: 'demo', ro: true };
+  sess.sig = signSession(sess);
+  setSession(sess);
+  loadLab('lab_demo');
+  /* بيانات عينة في الذاكرة بس — وضع المعاينة بيمنع الحفظ فمبتتحفظش ولا بتترفع */
+  if (DB && (!DB.patients || !DB.patients.length)) {
+    const casa = DB.tests.find(t => t.id === 'casa_1') || DB.tests[0];
+    const other = DB.tests.find(t => t !== casa) || casa;
+    DB.lab.name = 'معمل الطيّب التجريبي';
+    DB.lab.header.title = 'معمل الطيّب التجريبي للتحاليل الطبية';
+    DB.patients = [
+      { id: 'demo_p1', name: 'أحمد محمود السيد', age: 32, gender: 'ذكر', phone: '01001234567', code: 'P-1001', createdAt: '2026-10-09', title: '', ageMonths: 0, ageDays: 0, dob: '', nationality: '', nationalId: '', address: '', refNo: '', refTitle: '', referrer: 'دكتور محمود', pricePlan: '' },
+      { id: 'demo_p2', name: 'محمد عبد الله حسن', age: 41, gender: 'ذكر', phone: '01115556677', code: 'P-1002', createdAt: '2026-10-10', title: '', ageMonths: 0, ageDays: 0, dob: '', nationality: '', nationalId: '', address: '', refNo: '', refTitle: '', referrer: '', pricePlan: '' },
+      { id: 'demo_p3', name: 'مصطفى كامل إبراهيم', age: 28, gender: 'ذكر', phone: '01229998877', code: 'P-1003', createdAt: '2026-10-11', title: '', ageMonths: 0, ageDays: 0, dob: '', nationality: '', nationalId: '', address: '', refNo: '', refTitle: '', referrer: 'دكتور سمير', pricePlan: '' },
+      { id: 'demo_p4', name: 'خالد عمر يوسف', age: 35, gender: 'ذكر', phone: '01554443322', code: 'P-1004', createdAt: '2026-10-11', title: '', ageMonths: 0, ageDays: 0, dob: '', nationality: '', nationalId: '', address: '', refNo: '', refTitle: '', referrer: '', pricePlan: '' },
+    ];
+    DB.visits = [
+      { id: 'demo_v1', no: 1001, invoiceNo: 5001, patientId: 'demo_p1', date: '2026-10-09', doctor: 'د. محمود فتحي', discount: 0, paidAmount: 250, notes: '', tests: [{ testId: casa.id, status: 'done', results: { 'الحجم': '3.2 ml', 'التركيز': '38 M/ml', 'الحركة التقدمية': '42%', 'الشكل الطبيعي': '18%' } }] },
+      { id: 'demo_v2', no: 1002, invoiceNo: 5002, patientId: 'demo_p2', date: '2026-10-10', doctor: '', discount: 50, paidAmount: 200, notes: 'حجز مسبق', tests: [{ testId: casa.id, status: 'pending', results: {} }] },
+      { id: 'demo_v3', no: 1003, invoiceNo: 5003, patientId: 'demo_p3', date: '2026-10-11', doctor: 'د. سمير عادل', discount: 0, paidAmount: 400, notes: '', tests: [{ testId: other.id, status: 'pending', results: {} }, { testId: casa.id, status: 'pending', results: {} }] },
+      { id: 'demo_v4', no: 1004, invoiceNo: 5004, patientId: 'demo_p4', date: '2026-10-11', doctor: '', discount: 0, paidAmount: 0, notes: '', tests: [{ testId: other.id, status: 'pending', results: {} }] },
+    ];
+    DB.payments = [
+      { id: 'demo_pay1', visitId: 'demo_v1', invoiceNo: 5001, patient: 'أحمد محمود السيد', amount: 250, date: '2026-10-09', at: '2026-10-09T12:30:00.000Z' },
+      { id: 'demo_pay2', visitId: 'demo_v2', invoiceNo: 5002, patient: 'محمد عبد الله حسن', amount: 200, date: '2026-10-10', at: '2026-10-10T13:15:00.000Z' },
+      { id: 'demo_pay3', visitId: 'demo_v3', invoiceNo: 5003, patient: 'مصطفى كامل إبراهيم', amount: 400, date: '2026-10-11', at: '2026-10-11T10:05:00.000Z' },
+    ];
+    DB.inventory = [
+      { id: 'demo_iv1', name: 'أنابيب تحاليل EDTA', unit: 'أنبوب', stock: 240, minStock: 100, createdAt: '2026-10-01' },
+      { id: 'demo_iv2', name: 'أكواب بلاستيك معقمة', unit: 'كوب', stock: 35, minStock: 50, createdAt: '2026-10-01' },
+      { id: 'demo_iv3', name: 'إبر سحب 5 مل', unit: 'إبرة', stock: 120, minStock: 40, createdAt: '2026-10-01' },
+    ];
+    DB.invLog = [{ id: 'demo_l1', itemId: 'demo_iv2', qty: 15, at: '2026-10-10T09:00:00.000Z' }];
+    DB.casaQueue = [{ visitId: 'demo_v2', addedAt: '2026-10-10T13:16:00.000Z', done: false }, { visitId: 'demo_v3', addedAt: '2026-10-11T10:06:00.000Z', done: false }];
+  }
+  go(''); route();
 }
 function doSuperLogin() {
   const { user, pass } = { user: $('#lg-user').value.trim(), pass: $('#lg-pass').value };
