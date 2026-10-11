@@ -603,12 +603,56 @@ function recSave(printIt) {
   if (paid > 0) logPayment(v, paid);
   // CASA queue: أي تحليل منوي يسمع في CASA تلقائياً
   const casaHit = v.tests.some(t => /منوي|سمن|casa|semen/i.test(testById(t.testId)?.name || ''));
-  if (casaHit) DB.casaQueue.unshift({ visitId: v.id, addedAt: new Date().toISOString(), done: false });
+  if (casaHit) { DB.casaQueue.unshift({ visitId: v.id, addedAt: new Date().toISOString(), done: false }); casaCloudPush(v); }
   save();
   toast('✅ تم حفظ الحالة — فاتورة رقم ' + v.invoiceNo + (casaHit ? ' — 🔬 اتسجلت في CASA' : ''));
   if (printIt) printInvoice(v.id);
   renderReception();
 }
+/* إرسال الحالة المنوية لموقع CASA الخاص بالمعمل (نفس سحابة CSL — مسار labs/<casaLabId>) */
+async function casaCloudPush(v) {
+  try {
+    const lab = (typeof labById === 'function') ? labById(LABID) : null;
+    const casaLabId = lab && lab.casaLabId;
+    if (!casaLabId) return; /* المعمل ده لسه مش مربوط بموقع CASA */
+    const pat = patById(v.patientId); if (!pat) return;
+    const SYNC_URL = 'https://csl-sync.m-tayea93.workers.dev';
+    const KEY = 'casa-sync-k3m9qf27ahmed2026';
+    const req = async (doc, method, body) => {
+      const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 20000);
+      try {
+        const r = await fetch(SYNC_URL + '/casa?key=' + KEY + '&doc=' + encodeURIComponent(doc), {
+          method: method || 'GET', signal: ctrl.signal,
+          headers: body ? { 'Content-Type': 'application/json' } : undefined,
+          body: body ? JSON.stringify(body) : undefined });
+        if (!r.ok) throw new Error('http ' + r.status);
+        return await r.json();
+      } finally { clearTimeout(tm); }
+    };
+    const root = 'labs/' + casaLabId + ':';
+    /* المريض */
+    const pid = 'csl_p' + pat.id;
+    const pd = await req(root + 'patients');
+    const parr = (pd && pd.d) || [];
+    if (!parr.find(x => x.id === pid)) {
+      parr.push({ id: pid, code: pat.code || String(pid), name: pat.name, age: (pat.ageY != null ? String(pat.ageY) : (pat.age || '')), phone: pat.phone || '', refDoctor: v.doctor || '', notes: 'من CSL — فاتورة ' + v.invoiceNo, labId: casaLabId, createdAt: new Date().toISOString() });
+      await req(root + 'patients', 'PUT', { t: Date.now(), d: parr });
+    }
+    /* الدراسة: استمارة نتيجة فاضية جاهزة للتحليل في CASA */
+    const sid = 'csl_v' + v.id;
+    const sd = await req(root + 'studies');
+    const sarr = (sd && sd.d) || [];
+    if (!sarr.find(x => x.id === sid)) {
+      sarr.push({ id: sid, patientId: pid, date: v.date || today(),
+        volume: '', ph: '', concentration: '', count: '', pr: '', np: '', immotile: '', motileRatio: '', normalMorph: '', tzi: '', sdi: '', wbc: '', rbc: '', spermatogenicCells: '',
+        vcl: '', vsl: '', vap: '', lin: '', wob: '', str: '',
+        comment: 'من CSL — فاتورة ' + v.invoiceNo + (v.doctor ? ' — د. ' + v.doctor : ''), labId: casaLabId, src: 'csl' });
+      await req(root + 'studies', 'PUT', { t: Date.now(), d: sarr });
+    }
+    toast('☁️ الحالة اتبعتت لموقع CASA');
+  } catch (e) { console.warn('casaCloudPush:', e); }
+}
+
 function recRenderVisits() {
   const vs = DB.visits.filter(v => v.date === today());
   $('#rec-visits').innerHTML = vs.length ? `<table><tr><th>الفاتورة</th><th>الحالة</th><th>الدكتور</th><th>الإجمالي</th><th>الخصم</th><th>المطلوب</th><th>المدفوع</th><th>المتبقي</th><th></th></tr>
