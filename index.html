@@ -4,13 +4,13 @@
 <!-- 🔄 تحديث إجباري: أي جهاز يفتح نسخة قديمة بيتحدّث فوراً -->
 <script>
 (function () {
-  var V = 'csl-2026-10-12';
+  var V = 'csl-2026-10-12b';
   window.APP_VERSION = V;
   function nukedReload() {
     if (window.__nuking) return; window.__nuking = true;
     if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(function (rs) { rs.forEach(function (r) { r.unregister(); }); });
     if ('caches' in window) caches.keys().then(function (ks) { ks.forEach(function (k) { caches.delete(k); }); });
-    setTimeout(function () { location.reload(); }, 300);
+    setTimeout(function () { location.replace(location.pathname + '?mtu=' + Date.now() + location.hash); }, 300);
   }
   async function checkVersion() {
     try {
@@ -192,7 +192,7 @@ tr:nth-child(even) td{background:#f8fafd}
 <script src="lab-data.js"></script>
 <script src="security.js"></script>
 <script src="cloud.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=csl-2026-10-12b"></script>
 <script src="labops.js"></script>
 <script src="https://m-tayea.mtayea.com/signature/mtayea-signature.js"></script>
 <script>
