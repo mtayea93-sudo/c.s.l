@@ -1000,7 +1000,10 @@ function renderFinance() {
     return { c, total, paid, remaining: total - paid };
   });
   const month = todayStr.slice(0, 7);
-  const monthPaid = DB.companyDebts.filter(d => (d.date || '').startsWith(month)).reduce((a, d) => a + d.paid, 0);
+  const monthPaid = DB.companyDebts.reduce((a, d) => {
+    if (d.pays && d.pays.length) return a + d.pays.filter(pp => (pp.date || '').startsWith(month)).reduce((x, pp) => x + pp.amount, 0);
+    return a + ((d.date || '').startsWith(month) ? (d.paid || 0) : 0);
+  }, 0);
 
   shell('الحسابات — الخزينة والمديونية', `
   <div class="tabs5">
@@ -1147,7 +1150,7 @@ function trDeleteDay(date) { if (!confirm('حذف بيانات ' + date + '؟'))
 function trMonthly() {
   const data = tdata().days; const dates = Object.keys(data).sort().reverse();
   $('#tr-monthly').innerHTML = dates.length ? `<table><tr><th>اليوم</th><th>وارد فواتير</th><th>وارد يدوي</th><th>إجمالي الوارد</th><th>مصاريف</th><th></th></tr>
-  ${dates.map(dt => { const d = data[dt]; const inv = d.invoiceIncome?.total || 0;
+  ${dates.map(dt => { const d = data[dt]; const inv = invoiceIncomeByShift(dt).total;
     const manual = (d.patient.total || 0) + (d.lab.total || 0);
     const exp = Object.values(d.expenses || {}).reduce((a, b) => a + (+b || 0), 0) + (d.expenseDetails || []).reduce((a, e) => a + (e.amount || 0), 0);
     return `<tr><td class="num">${dt}</td><td class="num" style="color:#2e7d32;font-weight:700">${fmt(inv)}</td>
@@ -1167,10 +1170,10 @@ function trReports() {
   let bal = 0, rows = '';
   dates.slice().reverse().forEach((dt, i) => {
     const d = data[dt];
-    const inv = d.invoiceIncome ? d.invoiceIncome.total : invoiceIncomeByShift(dt).total;
+    const inv = invoiceIncomeByShift(dt).total;
     const manual = (d.patient.total || 0) + (d.lab.total || 0);
     const out = Object.values(d.expenses || {}).reduce((a, b) => a + (+b || 0), 0) + (d.expenseDetails || []).reduce((a, e) => a + (e.amount || 0), 0);
-    const compPaid = (DB.companyDebts || []).filter(x => x.date === dt).reduce((a, x) => a + x.paid, 0);
+    const compPaid = cdPaidOn(dt);
     const net = manual + inv - out - compPaid;
     bal += net;
     rows += `<tr><td>${i + 1}</td><td class="num">${dt}</td><td class="num">${fmt(manual)}</td><td class="num" style="color:#2e7d32">${fmt(inv)}</td>
@@ -1183,10 +1186,10 @@ function trReports() {
   let tIn = 0, tOut = 0, tComp = 0, prow = '';
   md.slice().reverse().forEach((dt, i) => {
     const d = data[dt];
-    const inv = d.invoiceIncome ? d.invoiceIncome.total : invoiceIncomeByShift(dt).total;
+    const inv = invoiceIncomeByShift(dt).total;
     const manual = (d.patient.total || 0) + (d.lab.total || 0);
     const out = Object.values(d.expenses || {}).reduce((a, b) => a + (+b || 0), 0) + (d.expenseDetails || []).reduce((a, e) => a + (e.amount || 0), 0);
-    const compPaid = (DB.companyDebts || []).filter(x => x.date === dt).reduce((a, x) => a + x.paid, 0);
+    const compPaid = cdPaidOn(dt);
     tIn += manual + inv; tOut += out; tComp += compPaid;
     const net = manual + inv - out - compPaid;
     prow += `<tr><td>${i + 1}</td><td class="num">${dt}</td><td class="num" style="color:#1565C0;font-weight:700">${fmt(manual + inv)}</td>
@@ -1201,6 +1204,14 @@ function trReports() {
     : '<div class="empty">لا توجد بيانات في هذا الشهر</div>';
 }
 
+/* سداد الشركات محسوب بتاريخ كل دفعة (قديم: كله بتاريخ المعاملة) */
+function cdPaidOn(dt) {
+  return (DB.companyDebts || []).reduce((a, d) => {
+    if (d.pays && d.pays.length) return a + d.pays.filter(pp => pp.date === dt).reduce((x, pp) => x + pp.amount, 0);
+    return a + (d.date === dt ? (d.paid || 0) : 0);
+  }, 0);
+}
+
 /* ---------- مديونية الشركات ---------- */
 function cdAdd() {
   const companyId = $('#cd-company').value;
@@ -1209,7 +1220,9 @@ function cdAdd() {
   const paid = +$('#cd-paid').value || 0;
   if (!companyId) return toast('⚠️ اختار الشركة (بتتسجل من الإعدادات)');
   if (!amount) return toast('⚠️ أدخل المبلغ');
-  DB.companyDebts.push({ id: uid('cd'), companyId, date, amount, paid, remaining: Math.max(0, amount - paid) });
+  const entry = { id: uid('cd'), companyId, date, amount, paid, remaining: Math.max(0, amount - paid) };
+  if (paid > 0) entry.pays = [{ amount: paid, date }];
+  DB.companyDebts.push(entry);
   save(); toast('✅ تم تسجيل المعاملة');
   $('#cd-amount').value = ''; $('#cd-paid').value = '';
   cdRender(); trReports();
@@ -1230,8 +1243,10 @@ function cdDoPay(id) {
   const amt = Math.min(rem, +$('#cdp-amount').value || 0);
   if (amt <= 0) return toast('⚠️ مبلغ غير صحيح');
   d.paid += amt;
+  d.pays = d.pays || [];
+  d.pays.push({ amount: amt, date: today() });
   save(); closeModal(); toast('✅ تم تسجيل سداد ' + fmt(amt) + ' ج.م');
-  cdRender();
+  cdRender(); trReports();
 }
 function cdDelete(id) { if (!confirm('حذف المعاملة؟')) return; DB.companyDebts = DB.companyDebts.filter(x => x.id !== id); save(); cdRender(); }
 function cdRender() {
