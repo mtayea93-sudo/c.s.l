@@ -102,6 +102,7 @@ function route() {
   if (!page || page === 'home') return renderHome();
   if (page === 'reception') return renderReception();
   if (page === 'casa') return renderCASA();
+  if (page === 'blood') return renderBlood();
   if (page === 'results') return renderResults();
   if (page === 'finance') return renderFinance();
   if (page === 'inventory') return renderInventory();
@@ -401,6 +402,7 @@ function renderHome() {
     ['casa', 'CASA', casaOn ? 'تحليل السائل المنوي — مفعّل ✓ بيفتح على موقعنا casa.mtayea.com في تبويب جديد' : 'تحليل السائل المنوي — غير مفعّل للمعمل ده، هيُفتح موقع CASA عادي وتقدر تفعّله هناك', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
+    ['blood', 'بنك الدم', 'متبرعون + سجل تبرعات + «مطلوب متبرعون» — والحالات اللي عليها فصيلة دم بتتسجل هنا تلقائياً', '🩸', '#c0392b'],
     ['settings', 'الإعدادات', 'الأسعار والتحاليل واللوجو والترويسة والمستخدمين والشركات', '⚙️', '#54627d'],
   ];
   $('#root').innerHTML = `
@@ -604,8 +606,10 @@ function recSave(printIt) {
   // CASA queue: أي تحليل منوي يسمع في CASA تلقائياً
   const casaHit = v.tests.some(t => /منوي|سمن|casa|semen/i.test(testById(t.testId)?.name || ''));
   if (casaHit) { DB.casaQueue.unshift({ visitId: v.id, addedAt: new Date().toISOString(), done: false }); casaCloudPush(v); }
+  /* بنك الدم: أي تحليل فصيلة دم / ABO / Rh بيسجّل الحالة كمتبرع تلقائياً */
+  const bloodHits = (typeof bloodAutoFromVisit === 'function') ? bloodAutoFromVisit(v) : 0;
   save();
-  toast('✅ تم حفظ الحالة — فاتورة رقم ' + v.invoiceNo + (casaHit ? ' — 🔬 اتسجلت في CASA' : ''));
+  toast('✅ تم حفظ الحالة — فاتورة رقم ' + v.invoiceNo + (casaHit ? ' — 🔬 اتسجلت في CASA' : '') + (bloodHits ? ' — 🩸 ' + bloodHits + ' في بنك الدم' : ''));
   if (printIt) printInvoice(v.id);
   renderReception();
 }
