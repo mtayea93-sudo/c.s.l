@@ -1,5 +1,5 @@
 /* CSL service worker — يخلي النظام يشتغل أوفلاين وينفع يتثبت كتطبيق */
-const CACHE = 'csl-v5';
+const CACHE = 'csl-v6';
 const CORE = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const CORE = [
   './cloud.js',
   './app.js',
   './labops.js',
+  './blood.js',
   './icon-192.png',
   './icon-512.png',
   './icon-maskable.png',
