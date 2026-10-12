@@ -318,6 +318,7 @@ function bloodDonationsHtml() {
     <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
       <input class="inp" id="dn-q" placeholder="🔍 ابحث بالاسم..." style="flex:1;min-width:200px" oninput="bloodRenderDonations()">
       <button class="btn btn-o" onclick="bloodExportCsv(true)">📥 Excel</button>
+      <button class="btn btn-o" onclick="bloodReportModal()">🖨️ تقرير</button>
     </div>
     <div id="dn-tbl">${bloodDonationsTable(ds)}</div></div>`;
 }
@@ -367,7 +368,8 @@ function bloodNeedHtml() {
     ${!t ? '<div class="empty">اختر الفصيلة المطلوبة وهيطلعلك كل المؤهلين فوراً</div>' : ''}
     ${t && !list.length ? '<div class="empty">لا يوجد متبرعون مؤهلون لهذه الفصيلة حالياً</div>' : ''}
     ${t && list.length ? `
-      <div class="hint ok">✅ فيه ${list.length} متبرع مؤهل — مرتبين بالأولوية (الأقدم تبرعاً الأول)</div>
+      <div class="hint ok">✅ فيه ${list.length} متبرع مؤهل — مرتبين بالأولوية (الأقدم تبرعاً الأول)
+        <button class="btn btn-o" style="padding:4px 14px;font-size:12.5px;margin-right:10px" onclick="bloodNeedPrint()">🖨️ طباعة القائمة</button></div>
       <table><tr><th>#</th><th>الاسم</th><th>آخر تبرع</th><th>التليفون</th><th></th></tr>
       ${list.map((d, i) => `<tr>
         <td class="num">${i + 1}</td><td><b>${esc(d.name)}</b></td>
@@ -500,6 +502,87 @@ function bloodImportJson(ev) {
     } catch (err) { alert('❌ ملف غير صالح: ' + err.message); }
   };
   r.readAsText(f); ev.target.value = '';
+}
+
+/* ---------- تقرير التبرعات (يومي / شهري / فترة) — للطباعة ---------- */
+function bloodReportModal() {
+  const m = today().slice(0, 7);
+  modal(`<h3 style="margin-bottom:14px">🖨️ تقرير التبرعات</h3>
+    <div class="grid2">
+      <div class="field"><label>من تاريخ</label><input class="inp" type="date" id="br-from" value="${m}-01"></div>
+      <div class="field"><label>إلى تاريخ</label><input class="inp" type="date" id="br-to" value="${today()}"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+      <button class="btn btn-o" style="padding:8px 16px;font-size:13px" onclick="bloodReport('day')">📅 اليوم</button>
+      <button class="btn btn-o" style="padding:8px 16px;font-size:13px" onclick="bloodReport('month')">🗓️ هذا الشهر</button>
+      <button class="btn btn-o" style="padding:8px 16px;font-size:13px" onclick="bloodReport('all')">📊 كل الفترات</button>
+      <button class="btn btn-p" onclick="bloodReport('range')">🖨️ طباعة الفترة المختارة</button>
+    </div>`);
+}
+function bloodPrintDoc(title, inner) {
+  const w = window.open('', '_blank', 'width=800,height=700');
+  if (!w) return toast('⚠️ اسمح بالنوافذ المنبثقة عشان تطبع');
+  w.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"><title>${title}</title>
+  <style>body{font-family:'Segoe UI',Tahoma,sans-serif;padding:26px;color:#222}
+  h1{font-size:1.2rem;margin:0 0 4px}.sub{color:#777;font-size:.85rem;margin-bottom:18px}
+  table{width:100%;border-collapse:collapse;font-size:.9rem}
+  th,td{padding:9px 10px;border-bottom:1px solid #eee;text-align:right}
+  th{background:#c0392b;color:#fff}
+  .sum{display:flex;gap:14px;flex-wrap:wrap;margin:14px 0}
+  .box{border:1px solid #eee;border-radius:10px;padding:12px 20px;text-align:center}
+  .box b{display:block;font-size:1.4rem;color:#c0392b}
+  .foot{margin-top:22px;text-align:center;color:#aaa;font-size:.75rem}
+  @media print{button{display:none}}</style></head><body>
+  <h1>🩸 ${title}</h1><div class="sub">${esc(DB.lab.name || '')} — نظام CSL — ${new Date().toLocaleDateString('ar-EG')}</div>
+  ${inner}
+  <div class="foot">صدر من نظام CSL — csl.mtayea.com</div>
+  <script>setTimeout(()=>print(),400)<\/script></body></html>`);
+  w.document.close();
+}
+function bloodReport(mode) {
+  bloodEnsure();
+  const t = today();
+  let from = '0000-01-01', to = '9999-12-31', label = 'كل الفترات';
+  if (mode === 'day') { from = to = t; label = 'تقرير يوم ' + t; }
+  if (mode === 'month') { from = t.slice(0, 7) + '-01'; to = t; label = 'تقرير شهر ' + t.slice(0, 7); }
+  if (mode === 'range') {
+    from = $('#br-from').value || from; to = $('#br-to').value || to;
+    label = 'تقرير الفترة من ' + from + ' إلى ' + to;
+  }
+  const list = [...DB.bloodDonations].filter(x => x.date >= from && x.date <= to)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const units = list.reduce((a, x) => a + (+x.qty || 0), 0);
+  const donors = new Set(list.map(x => x.donorId)).size;
+  const byType = {};
+  list.forEach(x => { const d = DB.bloodDonors.find(z => z.id === x.donorId); const tp = d ? d.bloodType : '?'; byType[tp] = (byType[tp] || 0) + (+x.qty || 0); });
+  closeModal();
+  if (!list.length) return toast('مفيش تبرعات في الفترة دي');
+  bloodPrintDoc(label, `
+    <div class="sum">
+      <div class="box"><b>${list.length}</b>عملية تبرع</div>
+      <div class="box"><b>${units}</b>وحدة دم</div>
+      <div class="box"><b>${donors}</b>متبرع</div>
+    </div>
+    <table><tr><th>#</th><th>التاريخ</th><th>المتبرع</th><th>الفصيلة</th><th>الكمية</th><th>المكان</th></tr>
+    ${list.map((x, i) => { const d = DB.bloodDonors.find(z => z.id === x.donorId);
+      return `<tr><td>${i + 1}</td><td>${esc(x.date)}</td><td>${esc(d ? d.name : 'محذوف')}</td><td>${esc(d ? d.bloodType || '—' : '—')}</td><td>${x.qty} وحدة</td><td>${esc(x.place || '—')}</td></tr>`; }).join('')}
+    </table>
+    <h3 style="margin:18px 0 8px">حسب الفصيلة</h3>
+    <table><tr><th>الفصيلة</th><th>الوحدات</th></tr>
+    ${Object.entries(byType).map(([tp, n]) => `<tr><td>${esc(tp)}</td><td>${n}</td></tr>`).join('')}
+    </table>`);
+}
+function bloodNeedPrint() {
+  bloodEnsure();
+  const t = bloodNeedType;
+  if (!t) return;
+  const list = DB.bloodDonors.filter(d => d.bloodType === t && bloodEligibleOn(d))
+    .sort((a, b) => (bloodDaysSince(a) ?? -1) - (bloodDaysSince(b) ?? -1));
+  if (!list.length) return toast('مفيش متبرعين مؤهلين للفصيلة دي');
+  bloodPrintDoc('مطلوب متبرعون — فصيلة ' + t, `
+    <table><tr><th>#</th><th>الاسم</th><th>التليفون</th><th>آخر تبرع</th></tr>
+    ${list.map((d, i) => `<tr><td>${i + 1}</td><td>${esc(d.name)}</td><td dir="ltr">${esc(d.phone || '—')}</td><td>${bloodDaysSince(d) === null ? 'لم يتبرع' : 'منذ ' + bloodDaysSince(d) + ' يوم'}</td></tr>`).join('')}
+    </table>`);
 }
 
 /* ---------- ستايل الوحدة ---------- */
