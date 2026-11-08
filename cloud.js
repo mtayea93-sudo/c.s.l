@@ -153,9 +153,14 @@
       const localAt = localStorage.getItem('csl_sync_' + labId);
       const localRaw = localStorage.getItem((typeof labKey === 'function') ? labKey(labId) : ('csl_v1_' + labId));
       if (!localAt && localRaw) {
-        /* جهاز عليه شغل من قبل المزامنة: ارفع المحلي بدل ما تمسحه */
-        cloudPushLab();
-        return;
+        /* الجهاز ده معمله محلي بس من غير طابع مزامنة:
+           لو فيه شغل حقيقي (مرضى/حجوزات/مدفوعات) ارفعه — لو دي نسخة seed فاضية السحابة تكسب */
+        let hasWork = false;
+        try {
+          const ldb = JSON.parse(localRaw);
+          hasWork = !!(ldb && ((ldb.patients && ldb.patients.length) || (ldb.visits && ldb.visits.length) || (ldb.payments && ldb.payments.length)));
+        } catch (e) {}
+        if (hasWork) { cloudPushLab(); return; }
       }
       if (localAt && doc.at && doc.at <= localAt) return; /* المحلي أحدث — هيترفع لوحده */
       /* السحابة أحدث → طبّقها */
@@ -237,11 +242,13 @@
     return CLOUD.fb.ref('csl/meta').once('value').then(snap => {
       const doc = snap.val();
       if (!doc) return cloudPushMeta();
-      if (doc.at === CLOUD.lastMetaPush) return;
-      if (applyMetaRemote(doc.v)) {
+      if (doc.at === CLOUD.lastMetaPush) return false;
+      const changed = applyMetaRemote(doc.v);
+      if (changed) {
         CLOUD.lastMetaApplied = JSON.stringify(META);
         try { saveMeta(); } catch (e) {}
       }
+      return changed;
     });
   };
 
