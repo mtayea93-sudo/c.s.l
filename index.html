@@ -4,7 +4,7 @@
 <!-- 🔄 تحديث إجباري: أي جهاز يفتح نسخة قديمة بيتحدّث فوراً -->
 <script>
 (function () {
-  var V = 'csl-2026-10-12e';
+  var V = 'csl-2026-11-08';
   window.APP_VERSION = V;
   function nukedReload() {
     if (window.__nuking) return; window.__nuking = true;
@@ -151,6 +151,17 @@ tr:nth-child(even) td{background:#f8fafd}
 .b-total{background:#1e5eff}.b-disc{background:#e8a33d}.b-paid{background:#2e7d32}.b-rem{background:#c62828}
 .y-pat-banner{border:1.5px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:14px;background:#f8fafd}
 @media(max-width:700px){.y-totalbar{grid-template-columns:repeat(2,1fr)}}
+/* ===== لوحة التحكم + سير المراجعة + إعدادات الطباعة (v2026-11-08) ===== */
+.sync-badge.busy{background:#fff3d6;color:#8a6100}
+.pill.p-ver{background:#e3f4f1;color:#0b6e62}
+.dash-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:14px;margin-bottom:14px}
+@media(max-width:900px){.dash-grid{grid-template-columns:1fr}}
+.ql-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px dashed #dde3ef;font-size:13px}
+.ql-row:last-of-type{border-bottom:none}
+.ql-p{flex:1}
+.chk-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:13px;padding:6px 0}
+.chk{display:flex;align-items:center;gap:7px;cursor:pointer;background:#f8fafd;border:1px solid var(--line);border-radius:9px;padding:7px 10px}
+.chk input{accent-color:var(--blue);width:16px;height:16px}
 </style>
 
 <style>
@@ -188,11 +199,14 @@ tr:nth-child(even) td{background:#f8fafd}
 </head>
 <body>
 <div id="root"></div>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="catalog.js"></script>
 <script src="lab-data.js"></script>
 <script src="security.js"></script>
 <script src="cloud.js"></script>
-<script src="app.js?v=csl-2026-10-12e"></script>
+<script src="app.js?v=csl-2026-11-08"></script>
 <script src="labops.js"></script>
 <script src="blood.js?v=csl-2026-10-12e"></script>
 <script src="https://m-tayea.mtayea.com/signature/mtayea-signature.js"></script>
