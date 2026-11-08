@@ -88,7 +88,8 @@
 
   /* دخول مجهول مع 3 محاولات — لو الشبكة مش بتوصل لجوجل نشتغل محلي بالكامل */
   function tryAuth(n) {
-    firebase.auth().signInAnonymously().then(() => {
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('auth-timeout')), 20000));
+    Promise.race([firebase.auth().signInAnonymously(), timeout]).then(() => {
       CLOUD.authed = true; CLOUD.ready = true;
       startListeners();
     }).catch(e => {
