@@ -773,7 +773,8 @@ function recRenderVisits() {
       <td class="num"><b>${fmt(net)}</b></td>
       <td class="num" style="color:#2e7d32">${fmt(v.paidAmount || 0)}</td>
       <td class="num" style="color:${rem > 0 ? '#c62828' : '#2e7d32'};font-weight:700">${fmt(rem)}</td>
-      <td><button class="btn btn-o btn-s" onclick="printInvoice('${v.id}')">🖨️</button>
+      <td><button class="btn btn-o btn-s" onclick="printInvoice('${v.id}')" title="طباعة الفاتورة (فيها باركود)">🖨️</button>
+          <button class="btn btn-t btn-s" onclick="printVisitBarcode('${v.id}')" title="طباعة باركود الحالة — ستيكر يلزق على العينة">🏷️ باركود</button>
           ${rem > 0 ? `<button class="btn btn-g btn-s" onclick="visitPay('${v.id}')">تسجيل دفع</button>` : ''}</td></tr>`; }).join('')}</table>`
     : '<div class="empty">لا توجد حالات اليوم</div>';
 }
@@ -817,6 +818,7 @@ function printInvoice(id) {
   <div>فاتورة رقم: <b class="num">${v.invoiceNo}</b> — التاريخ: <b>${v.date}</b></div>
   <div>الحالة: <b>${esc(p?.name)}</b> — ${p?.age} سنة — <span class="num">${esc(p?.phone || '')}</span></div>
   ${v.doctor ? `<div>الدكتور: <b>${esc(v.doctor)}</b></div>` : ''}
+  <div style="display:flex;flex-direction:column;align-items:center;margin-top:12px">${barcodeSvg(String(v.invoiceNo), 12)}<div class="num" style="font-weight:900;letter-spacing:2px;font-size:14px">${esc(v.invoiceNo)}</div></div>
   <table><tr><th>#</th><th>التحليل</th><th>السعر</th></tr>
   ${v.tests.map((t, i) => { const tt = testById(t.testId); return `<tr><td>${i + 1}</td><td>${esc(tt?.name)}</td><td>${fmt(tt?.price)}</td></tr>`; }).join('')}</table>
   <div class="t">الإجمالي: ${fmt(v.tests.reduce((a, t) => a + (testById(t.testId)?.price || 0), 0))} ج.م — الخصم: ${fmt(v.discount)} ج.م — <b>المطلوب: ${fmt(visitTotal(v))} ج.م</b> — المدفوع: ${fmt(v.paidAmount || 0)} ج.م — المتبقي: ${fmt(visitTotal(v) - (v.paidAmount || 0))} ج.م</div>
@@ -890,7 +892,8 @@ function resListHtml(vs) {
         <span><button class="btn btn-g btn-s" onclick="resReport('${v.id}')" title="كل التحاليل في تقرير واحد">🖨️ تقرير شامل (الكل)</button></span></h3>
       <div style="overflow-x:auto"><table><tr><th>التحليل</th><th>الحالة</th><th>النتيجة</th><th>التحقق</th><th>المراجعة</th><th>طباعة</th></tr>
       ${v.tests.map((t, i) => { const tt = testById(t.testId);
-        return `<tr><td style="font-weight:700">${esc(tt?.name)} <button class="btn btn-o btn-s" style="padding:2px 7px;font-size:12px" onclick="resEditTest('${v.id}',${i})" title="تعديل بيانات التحليل: الاسم والمعدل والوحدة والحسابات">⚙️</button></td>
+        return `<tr style="${t.hidden ? 'opacity:.45' : ''}"><td style="font-weight:700">${esc(tt?.name)} <button class="btn btn-o btn-s" style="padding:2px 7px;font-size:12px" onclick="resEditTest('${v.id}',${i})" title="تعديل بيانات التحليل: الاسم والمعدل والوحدة والحسابات">⚙️</button>
+        <button class="btn ${t.hidden ? 'btn-r' : 'btn-g'} btn-s" style="padding:2px 7px;font-size:12px" onclick="resToggleHidden('${v.id}',${i})" title="${t.hidden ? 'إظهار في التقرير الشامل' : 'إخفاء من التقرير الشامل'}">${t.hidden ? '🚫' : '👁️'}</button>${t.hidden ? ' <span style="font-size:10px;color:#c62828;font-weight:400">مخفي</span>' : ''}</td>
         <td>${resPill(t)}</td>
         <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل' : 'إدخال'}</button></td>
         <td>${t.status === 'done' ? (t.verified ? `<span style="color:#0b6e62;font-size:12px;white-space:nowrap">✔ ${esc(String(t.verified.by || '').split(' ')[0])}</span>` : `<button class="btn btn-o btn-s" onclick="resVerify('${v.id}',${i})">🔍 تحقق</button>`) : '<span style="color:#999">—</span>'}</td>
@@ -1048,7 +1051,7 @@ function buildReportHtml(v, p, doneTests, opts) {
     ${h.headerImg ? `<img class="report-headimg" src="${h.headerImg}">` : ''}
     <div class="report-header">
       <div class="rh-cell"><span class="rh-label">اسم المريض / Patient</span><b>${esc(p ? p.name : '')}</b></div>
-      <div class="rh-cell"><span class="rh-label">التاريخ / Date</span><span class="num">${esc(v.date)}</span></div>
+      <div class="rh-cell"><span class="rh-label">التاريخ / Date</span><span class="num">${esc(v.date)}</span>${(() => { const pv = (DB.visits || []).filter(x => x.patientId === v.patientId && x.id !== v.id && x.date < v.date).sort((a, b) => a.date < b.date ? 1 : -1)[0]; return pv ? `<div class="num" style="font-size:9.5px;color:#666;font-weight:400;line-height:1.5">زيارة سابقة: ${esc(pv.date)}<br>فاتورة ${esc(pv.invoiceNo)}</div>` : ''; })()}</div>
       <div class="rh-cell"><span class="rh-label">الطبيب المحيل / Referral</span>${esc(v.doctor || 'Self referral')}</div>
       ${rs.showQR ? `<div class="rh-qr">
         <div class="rh-qr-title">${esc(h.title || DB.lab.name)}</div>
@@ -1080,7 +1083,7 @@ function buildReportHtml(v, p, doneTests, opts) {
 function resReport(visitId, onlyIdx) {
   const v = DB.visits.find(x => x.id === visitId); if (!v) return;
   const p = patById(v.patientId);
-  let doneTests = v.tests.filter(t => t.status === 'done');
+  let doneTests = v.tests.filter(t => t.status === 'done' && !t.hidden);
   if (onlyIdx != null) {
     const one = v.tests[onlyIdx];
     if (!one || one.status !== 'done') return toast('⚠️ التحليل ده لسه مفيهوش نتيجة');
@@ -2083,4 +2086,74 @@ function catalogFixes() {
     changed = true;
   }
   if (changed) save();
+}
+/* ============================================================
+   نظام الباركود (Code 39 — بدون مكتبات خارجية، SVG يطبع مباشرة)
+   + إخفاء/إظهار التحليل من التقرير
+   ============================================================ */
+const BARCODE_MAP = {
+  '0':'101001101101','1':'110100101011','2':'101100101011','3':'110110010101',
+  '4':'101001101011','5':'110100110101','6':'101100110101','7':'101001011011',
+  '8':'110100101101','9':'101100101101','A':'110101001011','B':'101101001011',
+  'C':'110110100101','D':'101011001011','E':'110101100101','F':'101101100101',
+  'G':'101010011011','H':'110101001101','I':'101101001101','J':'101011001101',
+  'K':'110101010011','L':'101101010011','M':'110110101001','N':'101011010011',
+  'O':'110101101001','P':'101101101001','Q':'101010110011','R':'110101011001',
+  'S':'101101011001','T':'101011011001','U':'110010101011','V':'100110101011',
+  'W':'110011010101','X':'100101101011','Y':'110010110101','Z':'100110110101',
+  '-':'100101011011','.':'110010101101',' ':'100110101101','$':'100100100101',
+  '/':'100100101001','+':'100101001001','%':'101001001001','*':'100101101101'
+};
+/* باركود SVG جاهز للطباعة — text: أرقام/حروف كابيتال */
+function barcodeSvg(text, heightMm) {
+  heightMm = heightMm || 12;
+  const clean = String(text == null ? '' : text).toUpperCase().replace(/[^0-9A-Z\-. $/+%]/g, '-');
+  const full = '*' + clean + '*';
+  const N = 0.33, W = N * 2.4, H = heightMm;
+  let x = N, parts = [];
+  for (const ch of full) {
+    const pat = BARCODE_MAP[ch] || BARCODE_MAP['-'];
+    let bar = true;
+    for (const b of pat) {
+      const wdt = b === '1' ? W : N;
+      if (bar) parts.push(`<rect x="${x.toFixed(2)}" y="0" width="${wdt.toFixed(2)}" height="${H}"/>`);
+      x += wdt; bar = !bar;
+    }
+    x += N;
+  }
+  const total = x + N;
+  return `<svg width="${total.toFixed(1)}mm" height="${H}mm" viewBox="0 0 ${total.toFixed(1)} ${H}" xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" style="display:block">${parts.join('')}</svg>`;
+}
+/* طباعة ستيكر باركود الحالة (يلزق على العينة/الملف) */
+function printVisitBarcode(id) {
+  const v = DB.visits.find(x => x.id === id); if (!v) return;
+  const p = patById(v.patientId);
+  const w = window.open('', '_blank');
+  w.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>باركود ${esc(v.invoiceNo)}</title>
+  <style>
+  *{box-sizing:border-box}
+  body{font-family:Tahoma,Arial,sans-serif;margin:0;display:flex;justify-content:center;background:#fff}
+  .lbl{width:64mm;border:1px dashed #bbb;border-radius:2mm;padding:3mm;margin:4mm;text-align:center;color:#000}
+  .n{font-size:13px;font-weight:900}
+  .d{font-size:10px;color:#333;margin-top:1mm}
+  svg{margin:1.5mm auto 0.5mm}
+  .code{font-size:12px;font-weight:900;letter-spacing:2px}
+  @media print{@page{size:auto;margin:2mm}body{display:block}.lbl{border:none;margin:0 auto}}
+  </style></head><body>
+  <div class="lbl">
+    <div class="n">${esc(p?.name || '')}</div>
+    <div class="d">${esc(v.date)}${v.doctor ? ' — د. ' + esc(v.doctor) : ''}</div>
+    ${barcodeSvg(String(v.invoiceNo), 13)}
+    <div class="code num">${esc(v.invoiceNo)}</div>
+  </div>
+  <script>window.print()<\/script></body></html>`);
+  w.document.close();
+}
+/* إخفاء/إظهار تحليل من التقرير الشامل */
+function resToggleHidden(visitId, idx) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v && v.tests[idx];
+  if (!t) return;
+  t.hidden = !t.hidden;
+  save(); resPickPat();
+  toast(t.hidden ? '🚫 «' + (testById(t.testId)?.name || '') + '» مش هيظهر في التقرير الشامل' : '👁️ «' + (testById(t.testId)?.name || '') + '» هيرجع يظهر في التقرير');
 }
