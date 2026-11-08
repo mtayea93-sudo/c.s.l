@@ -397,13 +397,26 @@ async function doGoLab(id) {
 function renderHome() {
   const ses = session();
   const casaOn = !!labById(LABID)?.casa;
+  const tVisits = DB.visits.filter(v => v.date === today());
+  const tIncome = (DB.payments || []).filter(p => p.date === today()).reduce((a, p) => a + (p.amount || 0), 0);
+  const pendT = DB.visits.reduce((a, v) => a + v.tests.filter(t => t.status !== 'done').length, 0);
+  const pendV = DB.visits.filter(v => v.tests.some(t => t.status !== 'done')).length;
+  const awaitT = DB.visits.reduce((a, v) => a + v.tests.filter(t => t.status === 'done' && !t.reviewed).length, 0);
+  const awaitList = [];
+  DB.visits.forEach(v => v.tests.forEach((t, i) => {
+    if (t.status === 'done' && !t.reviewed && awaitList.length < 6) {
+      const p = patById(v.patientId); const tt = testById(t.testId);
+      awaitList.push({ v, i, p, tname: tt ? tt.name : '' });
+    }
+  }));
+  awaitList.sort((a, b) => (b.v.date + (b.v.id || '')).localeCompare(a.v.date + (a.v.id || '')));
   const tiles = [
     ['labops', 'المعمل', 'استقبال + نتائج + إعدادات (تحاليل/باراميترات/عينات) — بنظام CSL الكامل', '🏥', '#0b5bd3'],
     ['casa', 'CASA', casaOn ? 'تحليل السائل المنوي — مفعّل ✓ بيفتح على موقعنا casa.mtayea.com في تبويب جديد' : 'تحليل السائل المنوي — غير مفعّل للمعمل ده، هيُفتح موقع CASA عادي وتقدر تفعّله هناك', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
     ['blood', 'بنك الدم', 'متبرعون + سجل تبرعات + «مطلوب متبرعون» — والحالات اللي عليها فصيلة دم بتتسجل هنا تلقائياً', '🩸', '#c0392b'],
-    ['settings', 'الإعدادات', 'الأسعار والتحاليل واللوجو والترويسة والمستخدمين والشركات', '⚙️', '#54627d'],
+    ['settings', 'الإعدادات', 'الأسعار والتحاليل واللوجو والترويسة وإعدادات الطباعة والمستخدمين والشركات', '⚙️', '#54627d'],
   ];
   $('#root').innerHTML = `
   <div class="topbar">
@@ -423,6 +436,26 @@ function renderHome() {
         <div class="b">🔗 csl.mtayea.com/#/go/${LABID}</div>
       </div>
     </div>
+    <div class="stats">
+      <div class="stat blue"><div class="v">${tVisits.length}</div><div class="l">حالات اليوم</div></div>
+      <div class="stat green"><div class="v num">${fmt(tIncome)}</div><div class="l">محصّل اليوم (ج.م)</div></div>
+      <div class="stat gold"><div class="v">${pendT}</div><div class="l">تحليل منتظر نتيجة${pendV ? ` (${pendV} حالة)` : ''}</div></div>
+      <div class="stat ${awaitT ? 'red' : 'green'}"><div class="v">${awaitT}</div><div class="l">نتيجة بانت مراجعة</div></div>
+    </div>
+    <div class="dash-grid">
+      <div class="card"><h3>📊 إيراد آخر ٧ أيام (ج.م)</h3>
+        <canvas id="home-chart" style="width:100%;height:190px"></canvas>
+      </div>
+      <div class="card"><h3>⚡ نتائج بانت مراجعة نهائية</h3>
+        ${awaitList.length ? awaitList.map(x => `
+          <div class="ql-row">
+            <span class="ql-p"><b>${esc(x.p ? x.p.name : '')}</b><br><small style="color:var(--mut)">${esc(x.tname)} — <span class="num">${x.v.invoiceNo} / ${x.v.date}</span></small></span>
+            <button class="btn btn-o btn-s" onclick="go('results')">فتح</button>
+          </div>`).join('')
+        : '<div class="empty">✅ كل النتائج اتمراجعت — مفيش حاجة معلّقة</div>'}
+        <div style="margin-top:10px"><button class="btn btn-p btn-s" onclick="go('results')">📋 فتح صفحة النتائج</button></div>
+      </div>
+    </div>
     <div class="tiles">
       ${tiles.map(t => t[5]
         ? `<a class="tile" href="${t[5]}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
@@ -436,6 +469,49 @@ function renderHome() {
     </div>
   </div>`;
   updateSyncBadge();
+  setTimeout(drawHomeChart, 30);
+}
+
+/* رسم بياني أعمدة لإيراد آخر ٧ أيام — بدون مكتبات خارجية */
+function drawHomeChart() {
+  const c = document.getElementById('home-chart'); if (!c) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = c.clientWidth || 500, H = 190;
+  c.width = W * dpr; c.height = H * dpr;
+  const x = c.getContext('2d'); x.scale(dpr, dpr);
+  const days = [];
+  for (let i = 6; i >= 0; i--) { const d = new Date(); d.setDate(d.getDate() - i);
+    days.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')); }
+  const sums = days.map(dt => (DB.payments || []).filter(p => p.date === dt).reduce((a, p) => a + (p.amount || 0), 0));
+  const wd = ['حد', 'اتنين', 'تلات', 'أربع', 'خميس', 'جمعة', 'سبت'];
+  const labels = days.map(dt => { const d = new Date(dt + 'T00:00:00'); return wd[d.getDay()] + ' ' + d.getDate(); });
+  const max = Math.max.apply(null, sums.concat([1]));
+  const padB = 26, padT = 14, padX = 8;
+  const bw = (W - padX * 2) / 7;
+  const bh = H - padB - padT;
+  x.strokeStyle = '#e3e8f0'; x.fillStyle = '#7a8aa0'; x.font = '10.5px Tahoma'; x.textAlign = 'center';
+  for (let g = 0; g <= 3; g++) {
+    const y = padT + bh * g / 3;
+    x.beginPath(); x.moveTo(padX, y); x.lineTo(W - padX, y); x.stroke();
+    x.textAlign = 'left'; x.fillText(fmt(Math.round(max * (3 - g) / 3)), padX + 2, y - 2); x.textAlign = 'center';
+  }
+  sums.forEach((s, i) => {
+    const h = Math.max(2, bh * s / max);
+    const bx = W - padX - (i + 1) * bw + bw * 0.18; /* RTL: اليوم الأحد يمين */
+    const by = padT + bh - h;
+    const grad = x.createLinearGradient(0, by, 0, by + h);
+    grad.addColorStop(0, '#1e5eff'); grad.addColorStop(1, '#123cb0');
+    x.fillStyle = grad;
+    const r = Math.min(5, bw * 0.32 / 2);
+    x.beginPath();
+    x.moveTo(bx, by + h); x.lineTo(bx, by + r); x.arcTo(bx, by, bx + r, by, r);
+    x.lineTo(bx + bw * 0.64 - r, by); x.arcTo(bx + bw * 0.64, by, bx + bw * 0.64, by + r, r);
+    x.lineTo(bx + bw * 0.64, by + h); x.closePath(); x.fill();
+    x.fillStyle = '#1b2a4a'; x.font = 'bold 10px Tahoma';
+    x.fillText(fmt(s), bx + bw * 0.32, by - 4);
+    x.fillStyle = '#7a8aa0'; x.font = '10.5px Tahoma';
+    x.fillText(labels[i], bx + bw * 0.32, H - 8);
+  });
 }
 
 /* ============================================================
@@ -750,21 +826,58 @@ function resPickPat() {
   const vs = DB.visits.filter(v => v.patientId === pid);
   $('#res-list').innerHTML = resListHtml(vs);
 }
+/* حالة التحليل في سير المراجعة: منتظر ← بنتيجة ← متحقق ← مُراجع */
+function resPill(t) {
+  if (t.status !== 'done') return '<span class="pill p-unpaid">⏳ منتظر نتيجة</span>';
+  if (t.reviewed) return '<span class="pill p-done">✅ مُراجع — جاهز للطباعة</span>';
+  if (t.verified) return '<span class="pill p-ver">🔍 متحقق منه</span>';
+  return '<span class="pill p-unpaid">✏️ بنتيجة</span>';
+}
+function resVerify(visitId, idx) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v && v.tests[idx];
+  if (!t || t.status !== 'done') return toast('⚠️ سجّل النتيجة الأول');
+  if (t.verified) return toast('🔍 النتيجة متحقق منها بالفعل');
+  t.verified = { at: new Date().toISOString(), by: (session() || {}).name || '' };
+  save(); toast('🔍 تم التحقق من النتيجة'); resPickPat();
+}
+function resReview(visitId, idx) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v && v.tests[idx];
+  if (!t || !t.verified) return toast('⚠️ لازم التحقق من النتيجة الأول');
+  if (t.reviewed) return toast('✅ النتيجة مُراجعة بالفعل');
+  t.reviewed = { at: new Date().toISOString(), by: (session() || {}).name || '' };
+  save(); toast('✅ تمت المراجعة — التقرير جاهز للطباعة'); resPickPat();
+}
 function resListHtml(vs) {
   if (!vs.length) return '<div class="card"><div class="empty">لا توجد حالات — سجّل حالة من الاستقبال الأول</div></div>';
   return vs.map(v => { const p = patById(v.patientId);
+    const rev = v.tests.filter(t => t.reviewed).length;
     return `<div class="card">
       <h3 style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
-        <span>🧍 <b>${esc(p?.name)}</b> <span class="num" style="color:var(--mut)">فاتورة ${v.invoiceNo} — ${v.date}</span></span>
+        <span>🧍 <b>${esc(p?.name)}</b> <span class="num" style="color:var(--mut)">فاتورة ${v.invoiceNo} — ${v.date}</span>
+          <span class="pill ${rev === v.tests.length && rev ? 'p-done' : 'p-unpaid'}">${rev}/${v.tests.length} مُراجَع</span></span>
         <span><button class="btn btn-g btn-s" onclick="resReport('${v.id}')" title="كل التحاليل في تقرير واحد">🖨️ تقرير شامل (الكل)</button></span></h3>
-      <table><tr><th>التحليل</th><th>الحالة</th><th></th><th></th></tr>
+      <div style="overflow-x:auto"><table><tr><th>التحليل</th><th>الحالة</th><th>النتيجة</th><th>التحقق</th><th>المراجعة</th><th>طباعة</th></tr>
       ${v.tests.map((t, i) => { const tt = testById(t.testId);
         return `<tr><td style="font-weight:700">${esc(tt?.name)}</td>
-        <td>${t.status === 'done' ? '<span class="pill p-done">✅ بنتيجة</span>' : '<span class="pill p-unpaid">⏳ منتظر</span>'}</td>
-        <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل النتيجة' : 'إدخال النتيجة'}</button></td>
-        <td>${t.status === 'done' ? `<button class="btn btn-o btn-s" onclick="resReport('${v.id}',${i})" title="طباعة التحليل ده لوحده">🖨️ تقرير</button>` : ''}</td></tr>`;
-      }).join('')}</table>
+        <td>${resPill(t)}</td>
+        <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل' : 'إدخال'}</button></td>
+        <td>${t.status === 'done' ? (t.verified ? `<span style="color:#0b6e62;font-size:12px;white-space:nowrap">✔ ${esc(String(t.verified.by || '').split(' ')[0])}</span>` : `<button class="btn btn-o btn-s" onclick="resVerify('${v.id}',${i})">🔍 تحقق</button>`) : '<span style="color:#999">—</span>'}</td>
+        <td>${t.verified ? (t.reviewed ? `<span style="color:#2e7d32;font-size:12px;white-space:nowrap">✔ ${esc(String(t.reviewed.by || '').split(' ')[0])}</span>` : `<button class="btn btn-o btn-s" onclick="resReview('${v.id}',${i})">✅ مراجعة</button>`) : '<span style="color:#999">—</span>'}</td>
+        <td>${t.status === 'done' ? `<button class="btn btn-o btn-s" onclick="resReport('${v.id}',${i})" title="طباعة التحليل ده لوحده">🖨️ تقرير</button>` : '<span style="color:#999">—</span>'}</td></tr>`;
+      }).join('')}</table></div>
     </div>`; }).join('');
+}
+
+/* آخر نتيجة مسجّلة لنفس المريض في نفس التحليل — للمقارنة أثناء الإدخال */
+function resPrevOf(pid, testId, field, beforeDate, curVisitId) {
+  const vs = DB.visits.filter(x => x.patientId === pid && x.id !== curVisitId && x.date <= beforeDate
+    && x.tests.some(t => t.testId === testId && t.status === 'done' && t.results && t.results[field] !== undefined && t.results[field] !== ''))
+    .sort((a, b) => a.date < b.date ? 1 : -1);
+  for (const vv of vs) {
+    const t = vv.tests.find(t => t.testId === testId && t.status === 'done' && t.results && t.results[field] !== undefined && t.results[field] !== '');
+    if (t) return { val: t.results[field], date: vv.date };
+  }
+  return null;
 }
 /* إدخال النتيجة: حقول التحليل من الكتالوج [اسم الحقل، الوحدة، من، إلى] */
 function resWork(visitId, idx) {
@@ -772,6 +885,7 @@ function resWork(visitId, idx) {
   const p = patById(v.patientId);
   t.results = t.results || {};
   const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+  const prevMap = {}; fields.forEach(f => { prevMap[f[0]] = resPrevOf(v.patientId, t.testId, f[0], v.date, v.id); });
   modal(`<h3>🧪 ${esc(tt?.name)}</h3>
     <div class="y-pat-banner">
       <div><b>${esc(p?.title ? p.title + ' ' : '')}${esc(p?.name)}</b><span style="color:var(--mut)"> — ${esc(p?.gender || '')} - ${p?.age ?? ''}Y</span></div>
@@ -781,7 +895,7 @@ function resWork(visitId, idx) {
     ${fields.map((f, i) => { const val = t.results[f[0]] ?? '';
       return `<div class="res-field"><label>${esc(f[0])}${f[1] ? ` (${esc(f[1])})` : ''}</label>
       <input id="rf-${i}" value="${esc(val)}" oninput="resFlagLive(${i},'${esc(f[2] || '')}','${esc(f[3] || '')}')">
-      ${f[2] || f[3] ? `<div class="rf num">( ${esc(f[2])} - ${esc(f[3])} ) <span id="rfl-${i}"></span></div>` : ''}</div>`;
+      ${f[2] || f[3] ? `<div class="rf num">( ${esc(f[2])} - ${esc(f[3])} ) <span id="rfl-${i}"></span></div>` : ''}${prevMap[f[0]] ? `<div class="rf" style="color:#0b6e62;font-size:11px">📈 آخر نتيجة: <b>${esc(prevMap[f[0]].val)}</b> <span class="num">(${prevMap[f[0]].date})</span></div>` : ''}</div>`;
     }).join('')}
     </div>
     <div class="field" style="margin-top:12px"><label>ملاحظات / تعليق الدكتور</label><input class="inp2" id="rf-notes" value="${esc(t.notes || '')}" style="width:100%"></div>
@@ -812,9 +926,123 @@ function resSave(visitId, idx, report) {
   resPickPat();
   if (report) resReport(visitId);
 }
-/* تقرير نتائج قابل للطباعة — نفس شكل تقارير المختبر (GenericReport) */
+/* ============================================================
+   تقرير النتائج — محرك طباعة A4 فاخر
+   سير العمل: إدخال نتيجة ← تحقق ← مراجعة ← طباعة
+   كل إعدادات الطباعة قابلة للتخصيص من صفحة الإعدادات
+   ============================================================ */
+const RSET_DEF = { margTop: 8, margSide: 10, font: 13, lineH: 7.5, showQR: true, showTitle: true, title: 'تقرير نتائج التحاليل', showSign: true, signName: '', signImg: '', showWM: true, showFootWM: true, showSched: true };
+function rset() { return Object.assign({}, RSET_DEF, DB.lab.rset || {}); }
+const dmy = iso => { if (!iso) return ''; const d = new Date(iso); return d.getDate() + '/' + (d.getMonth() + 1) + '/' + d.getFullYear(); };
+
+/* مولّد التقرير — بيخدم الطباعة الحقيقية والمعاينة التجريبية */
+function buildReportHtml(v, p, doneTests, opts) {
+  opts = opts || {};
+  const h = DB.lab.header || {};
+  const rs = rset();
+  const sexStr = p && p.gender === 'أنثى' ? 'Female' : (p && p.gender ? 'Male' : '');
+  const ageStr = p && p.age ? String(p.age) + ' Y' : '';
+  const flagOf = (val, low, hi) => {
+    const n = parseFloat(val); if (val === '' || isNaN(n)) return ['', ''];
+    const lo = parseFloat(low), hh = parseFloat(hi);
+    if (!isNaN(lo) && n < lo) return ['L', 'color:#c62828'];
+    if (!isNaN(hh) && n > hh) return ['H', 'color:#c62828'];
+    return ['', ''];
+  };
+  const rowHtml = (f, t) => {
+    const val = (t.results || {})[f[0]] ?? '';
+    const [fg, st] = flagOf(val, f[2], f[3]);
+    const ref = (f[2] || f[3]) ? `${esc(f[2] || '')} - ${esc(f[3] || '')}` : '—';
+    return `<tr class="rr">
+      <td class="c-name">${esc(f[0])}${f[1] ? ` <span class="c-unit">${esc(f[1])}</span>` : ''}</td>
+      <td class="c-res" style="${st}">${esc(val) || '—'}${fg ? ` <b class="c-flag">${fg}</b>` : ''}</td>
+      <td class="c-ref num">${ref}</td>
+    </tr>`;
+  };
+  const groups = doneTests.map(t => { const tt = testById(t.testId);
+    const fields = (tt && tt.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+    const stamp = [];
+    if (t.verified) stamp.push('تحقق: ' + esc((t.verified.by || '')) + ' — ' + dmy(t.verified.at));
+    if (t.reviewed) stamp.push('مراجعة: ' + esc((t.reviewed.by || '')) + ' — ' + dmy(t.reviewed.at));
+    return `<tbody class="grp">
+      <tr class="grp-head"><td colspan="3">${esc(tt ? tt.name : '')}${stamp.length ? `<span class="grp-stamp">${stamp.join(' • ')}</span>` : ''}</td></tr>
+      ${fields.map(f => rowHtml(f, t)).join('')}
+      ${t.notes ? `<tr class="grp-notes"><td colspan="3"><b>ملاحظات:</b> ${esc(t.notes)}</td></tr>` : ''}
+    </tbody>`; }).join('');
+  const allRev = doneTests.every(t => t.reviewed);
+  const signName = rs.signName || DB.lab.specialist || '';
+  return `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تقرير ${esc(v.invoiceNo)}</title>
+  <style>
+  *{box-sizing:border-box}
+  body{font-family:Tahoma,Arial,sans-serif;margin:0;background:#fff;color:#111}
+  .page{width:210mm;min-height:297mm;padding:${rs.margTop}mm ${rs.margSide}mm 34mm;margin:auto;position:relative;z-index:1}
+  .report-headimg{width:100%;max-height:45mm;object-fit:contain;margin-bottom:3mm}
+  .report-header{display:grid;grid-template-columns:${rs.showQR ? '1fr 1fr 1fr 50mm' : '1fr 1fr 1fr'};gap:2mm;border:1.5px solid #333;border-radius:2mm;padding:3mm;margin-bottom:4mm}
+  .rh-cell{display:flex;flex-direction:column;gap:1mm;font-size:12.5px}
+  .rh-label{font-size:10px;color:#777;font-weight:700}
+  .rh-qr{border-right:1px dashed #999;padding-right:3mm;display:flex;flex-direction:column;gap:.5mm;font-size:11px;justify-content:center}
+  .rh-qr-title{font-weight:900;font-size:12px}
+  .rh-qr-line{direction:ltr;text-align:left}
+  .report-title{text-align:center;font-weight:900;font-size:16px;margin:2mm 0 3mm;color:#0d1b3e}
+  table.rt{width:100%;border-collapse:collapse}
+  .rt thead th{font-size:${rs.font - 1}px;border-top:1.2px solid #333;border-bottom:1.2px solid #333;padding:1.5mm 2mm;text-align:right;color:#0d1b3e;background:#fff}
+  .grp-head td{background:#e2e6ee;font-weight:900;font-size:${rs.font + 1}px;padding:1.6mm 2mm}
+  .grp-head{break-inside:avoid;break-after:avoid;page-break-after:avoid}
+  .rr{break-inside:avoid;page-break-inside:avoid}
+  .grp-stamp{float:left;font-weight:400;font-size:9.5px;color:#555}
+  .rr td{border-bottom:1px dashed #aaa;padding:${Math.round(rs.lineH * 0.3 * 10) / 10}mm 2mm;font-size:${rs.font}px;vertical-align:middle}
+  .c-name{width:46%}.c-res{width:27%;font-weight:700}.c-flag{font-size:${rs.font - 1}px}.c-unit{color:#555;font-size:${rs.font - 2}px;font-weight:400}.c-ref{width:27%;color:#333}
+  .grp-notes td{font-size:${rs.font - 1}px;color:#333;padding:1.5mm 2mm;white-space:pre-wrap}
+  .pfoot{position:fixed;bottom:4mm;left:${rs.margSide}mm;right:${rs.margSide}mm;display:flex;justify-content:space-between;align-items:flex-end;gap:6mm;border-top:1px solid #999;padding-top:1.5mm;z-index:2;background:#fff}
+  .pf-remarks{font-size:11px;color:#444;max-width:42%}
+  .pf-review{font-size:10.5px;font-weight:700;text-align:center}
+  .pf-review.ok{color:#2e7d32}
+  .pf-review.no{color:#b26a00}
+  .pf-sign{text-align:center;min-width:45mm}
+  .pf-sign-title{font-size:11px;color:#666}
+  .pf-sign-name{font-weight:900;border-top:1px solid #333;padding-top:1mm;margin-top:${rs.signImg ? '1' : '8'}mm}
+  .pf-sign-img{max-height:16mm;max-width:45mm;object-fit:contain}
+  .report-wm{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none}
+  .report-wm img{max-width:75%;max-height:75%;opacity:.12}
+  @media print{@page{size:A4;margin:0}body{padding:0}.pfoot{position:fixed}}
+  </style></head><body>
+  ${rs.showWM && h.wmImg ? `<div class="report-wm"><img src="${h.wmImg}"></div>` : ''}
+  <div class="page">
+    ${h.headerImg ? `<img class="report-headimg" src="${h.headerImg}">` : ''}
+    <div class="report-header">
+      <div class="rh-cell"><span class="rh-label">اسم المريض / Patient</span><b>${esc(p ? p.name : '')}</b></div>
+      <div class="rh-cell"><span class="rh-label">التاريخ / Date</span><span class="num">${esc(v.date)}</span></div>
+      <div class="rh-cell"><span class="rh-label">الطبيب المحيل / Referral</span>${esc(v.doctor || 'Self referral')}</div>
+      ${rs.showQR ? `<div class="rh-qr">
+        <div class="rh-qr-title">${esc(h.title || DB.lab.name)}</div>
+        <div class="rh-qr-line num">Request: ${esc(v.invoiceNo)}</div>
+        <div class="rh-qr-line num">Patient: ${esc(p ? p.code : '')}</div>
+        <div class="rh-qr-line">${sexStr} - ${ageStr}</div>
+      </div>` : ''}
+    </div>
+    ${rs.showTitle ? `<div class="report-title">${esc(rs.title)}</div>` : ''}
+    <table class="rt">
+      <thead><tr><th>Test name</th><th>Result</th><th>Reference range</th></tr></thead>
+      ${groups}
+    </table>
+  </div>
+  <div class="pfoot">
+    <div class="pf-remarks">${rs.showSched ? `🕐 ${esc(DB.lab.schedule)}<br>` : ''}${esc(h.footer || '')}</div>
+    <div class="pf-review ${allRev ? 'ok' : 'no'}">${allRev ? '✔ تم التحقق والمراجعة' : '⚠ النتائج بانت مراجعة نهائية'}</div>
+    ${rs.showSign ? `<div class="pf-sign">
+      <div class="pf-sign-title">توقيع أخصائي المختبر</div>
+      ${rs.signImg ? `<img class="pf-sign-img" src="${rs.signImg}">` : ''}
+      <div class="pf-sign-name">${esc(signName)}</div>
+    </div>` : ''}
+    ${rs.showFootWM ? `<div style="position:fixed;bottom:1mm;left:0;right:0;text-align:center;font-size:9px;color:#bbb">CSL — csl.mtayea.com</div>` : ''}
+  </div>
+  <script>window.print()<\/script></body></html>`;
+}
+
+/* طباعة تقرير حقيقي — بتسجّل عدد مرات الطباعة على الزيارة */
 function resReport(visitId, onlyIdx) {
-  const v = DB.visits.find(x => x.id === visitId); const p = patById(v.patientId); const h = DB.lab.header || {};
+  const v = DB.visits.find(x => x.id === visitId); if (!v) return;
+  const p = patById(v.patientId);
   let doneTests = v.tests.filter(t => t.status === 'done');
   if (onlyIdx != null) {
     const one = v.tests[onlyIdx];
@@ -822,89 +1050,29 @@ function resReport(visitId, onlyIdx) {
     doneTests = [one];
   }
   if (!doneTests.length) return toast('⚠️ لسه مفيش نتائج محفوظة للحالة دي');
-  const sexStr = p?.gender === 'أنثى' ? 'Female' : 'Male';
-  const ageStr = p?.age ? String(p.age) + ' Y' : '';
-  const flagOf = (val, low, hi) => {
-    const n = parseFloat(val); if (val === '' || isNaN(n)) return ['', ''];
-    const lo = parseFloat(low), hh = parseFloat(hi);
-    if (!isNaN(lo) && n < lo) return ['L', 'color:#c62828;font-weight:900'];
-    if (!isNaN(hh) && n > hh) return ['H', 'color:#c62828;font-weight:900'];
-    return ['', ''];
-  };
-  const lineRow = (f, t) => {
-    const val = (t.results || {})[f[0]] ?? '';
-    const [fg, st] = flagOf(val, f[2], f[3]);
-    const ref = (f[2] || f[3]) ? `( ${esc(f[2] || '')} - ${esc(f[3] || '')} )` : '';
-    return `<div class="report-table-line">
-      <div class="rt-name">${esc(f[0])}</div>
-      <div class="rt-result" style="${st}">${esc(val)}${fg ? ` <b>${fg}</b>` : ''} <span class="rt-unit">${esc(f[1] || '')}</span></div>
-      <div class="rt-ref num">${ref}</div>
-    </div>`;
-  };
+  v.prints = (v.prints || 0) + 1;
+  v.lastPrintedAt = new Date().toISOString();
+  save();
   const w = window.open('', '_blank');
-  w.document.write(`<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"><title>تقرير ${v.invoiceNo}</title>
-  <style>
-  body{font-family:Tahoma;margin:0;background:#fff}
-  .report-page{width:210mm;min-height:295mm;padding:10mm 12mm;box-sizing:border-box;margin:auto;display:flex;flex-direction:column}
-  .report-header{display:grid;grid-template-columns:1fr 1fr 1fr 52mm;grid-template-areas:"name date ref qr";gap:2mm;border:1.5px solid #333;border-radius:3mm;padding:3mm;margin-bottom:4mm}
-  .rh-name{grid-area:name}.rh-date{grid-area:date}.rh-ref{grid-area:ref}
-  .rh-cell{display:flex;flex-direction:column;gap:1mm;font-size:13px}
-  .rh-label{font-size:10.5px;color:#777;font-weight:700}
-  .rh-qr{grid-area:qr;border-right:1px dashed #999;padding-right:3mm;display:flex;flex-direction:column;gap:.5mm;font-size:11px;justify-content:center}
-  .rh-qr-title{font-weight:900;font-size:12px}
-  .rh-qr-line{direction:ltr;text-align:left}
-  .report-title{text-align:center;font-weight:900;font-size:16px;margin:2mm 0 4mm;color:#0d1b3e}
-  .report-table-head{display:flex;justify-content:space-between;font-weight:900;border-bottom:1px solid gray;padding-bottom:1mm;margin-bottom:1mm;font-size:13.5px}
-  .report-table-head div:nth-child(2){margin-right:auto;margin-left:22mm}
-  .report-table-line{display:flex;align-items:center;flex:0 0 8mm;border-bottom:1px dashed #adadad;font-size:13px}
-  .rt-name{width:44%}.rt-result{width:31%;font-weight:700}.rt-unit{color:#555;font-weight:400;font-size:11.5px}.rt-ref{width:25%;color:#333}
-  .report-profile{background:#cccccc;height:7mm;display:flex;align-items:center;padding:0 3mm;font-size:15px;font-weight:900;margin:2mm 0 0}
-  .report-comment{white-space:pre-wrap;margin:1.5mm 0;padding:0 3mm;font-size:12.5px}
-  .report-footer{margin-top:auto;display:flex;justify-content:space-between;align-items:flex-end;padding-top:6mm}
-  .report-remarks{font-size:12px;color:#444;max-width:60%}
-  .report-sign{text-align:center}
-  .report-sign-title{font-size:12px;color:#666}
-  .report-sign-name{font-weight:900;border-top:1px solid #333;padding-top:1mm;margin-top:8mm;min-width:45mm}
-  .report-watermark{text-align:center;font-size:10px;color:#aaa;margin-top:2mm}
-  .report-headimg{width:100%;max-height:45mm;object-fit:contain;margin-bottom:3mm}
-  .report-wm{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:0;pointer-events:none}
-  .report-wm img{max-width:75%;max-height:75%;opacity:.12}
-  .report-page{position:relative;z-index:1}
-  @media print{@page{size:A4;margin:0}body{padding:0}}
-  </style></head><body>
-  ${h.wmImg ? `<div class="report-wm"><img src="${h.wmImg}"></div>` : ''}
-  <div class="report-page">
-    ${h.headerImg ? `<img class="report-headimg" src="${h.headerImg}">` : ''}
-    <div class="report-header">
-      <div class="rh-cell rh-name"><span class="rh-label">اسم المريض / Patient</span><b>${esc(p?.name)}</b></div>
-      <div class="rh-cell rh-date"><span class="rh-label">التاريخ / Date</span><span class="num">${v.date}</span></div>
-      <div class="rh-cell rh-ref"><span class="rh-label">الطبيب المحيل / Referral</span>${esc(v.doctor || 'Self referral')}</div>
-      <div class="rh-qr">
-        <div class="rh-qr-title">${esc(h.title || DB.lab.name)}</div>
-        <div class="rh-qr-line num">Request: ${v.invoiceNo}</div>
-        <div class="rh-qr-line num">Patient: ${esc(p?.code)}</div>
-        <div class="rh-qr-line">${sexStr} - ${ageStr}</div>
-      </div>
-    </div>
-    <div class="report-title">تقرير نتائج التحاليل</div>
-    <div class="report-body">
-      <div class="report-table-head"><div>Test name</div><div>Result</div><div>Reference range</div></div>
-      ${doneTests.map(t => { const tt = testById(t.testId);
-        const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
-        return `<div class="report-profile">${esc(tt?.name || '')}</div>
-        ${fields.map(f => lineRow(f, t)).join('')}
-        ${t.notes ? `<pre class="report-comment">${esc(t.notes)}</pre>` : ''}`; }).join('')}
-    </div>
-    <div class="report-footer">
-      <div class="report-remarks">🕐 ${esc(DB.lab.schedule)}<br>${esc(h.footer || '')}</div>
-      <div class="report-sign">
-        <div class="report-sign-title">توقيع أخصائي المختبر</div>
-        <div class="report-sign-name">${esc(DB.lab.specialist || '')}</div>
-      </div>
-    </div>
-    <div class="report-watermark">CSL — csl.mtayea.com</div>
-  </div>
-  <script>window.print()<\/script></body></html>`);
+  w.document.write(buildReportHtml(v, p, doneTests));
+  w.document.close();
+}
+
+/* معاينة تجريبية ببيانات وهمية — من إعدادات الطباعة */
+function stPreviewReport() {
+  stSaveRset(true);
+  const tt = DB.tests.find(t => t.fields && t.fields.length >= 3) || DB.tests[0];
+  if (!tt) return toast('⚠️ مفيش تحاليل في الكتالوج');
+  const fields = (tt.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+  const results = {};
+  fields.forEach((f, i) => { results[f[0]] = f[2] && f[3] ? String((parseFloat(f[2]) + parseFloat(f[3])) / 2 || 12.5) : (i === 0 ? 'طبيعي' : ''); });
+  results[fields[0][0]] = results[fields[0][0]] || 'سلبي';
+  const sampleT = { testId: tt.id, status: 'done', results, notes: 'معاينة تجريبية لشكل التقرير — البيانات دي مش حقيقية.',
+    verified: { at: new Date().toISOString(), by: 'معاينة' }, reviewed: { at: new Date().toISOString(), by: 'معاينة' } };
+  const sampleV = { id: 'preview', invoiceNo: '5001', date: today(), doctor: 'د. معاينة' };
+  const sampleP = { name: 'مريض تجريبي — Preview Patient', code: 'ab-12cd', age: 35, gender: 'ذكر' };
+  const w = window.open('', '_blank');
+  w.document.write(buildReportHtml(sampleV, sampleP, [sampleT], { sample: true }));
   w.document.close();
 }
 
@@ -1414,6 +1582,7 @@ function renderSettings() {
     return;
   }
   const cs = (typeof cloudStatusInfo === 'function') ? cloudStatusInfo() : { ok: false, last: null };
+  const rs = rset();
   const csLast = cs.last ? new Date(cs.last).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' }) : 'لسه مفيش نسخة مرفوعة من الجهاز ده';
   window.__cloudPushed = () => {
     const el = document.getElementById('cs-last');
@@ -1460,6 +1629,36 @@ function renderSettings() {
       </div>
     </div>
     <button class="btn btn-p btn-s" onclick="stSaveHeader()">💾 حفظ الترويسة</button>
+  </div>
+  <div class="card"><h3>🖨️ إعدادات طباعة التقارير (A4)</h3>
+    <div class="grid2">
+      <div class="field"><label>الهامش العلوي (مم)</label><input class="inp2 num" type="number" id="rs-margTop" value="${rs.margTop}" style="width:100%"></div>
+      <div class="field"><label>الهامش الجانبي (مم)</label><input class="inp2 num" type="number" id="rs-margSide" value="${rs.margSide}" style="width:100%"></div>
+      <div class="field"><label>حجم خط التقرير (بكسل)</label><input class="inp2 num" type="number" id="rs-font" value="${rs.font}" style="width:100%"></div>
+      <div class="field"><label>ارتفاع سطر النتيجة (مم)</label><input class="inp2 num" step="0.5" id="rs-lineH" value="${rs.lineH}" style="width:100%"></div>
+      <div class="field"><label>عنوان التقرير</label><input class="inp2" id="rs-title" value="${esc(rs.title)}" style="width:100%"></div>
+      <div class="field"><label>اسم أخصائي المختبر (بيظهر تحت التوقيع)</label><input class="inp2" id="rs-signName" value="${esc(rs.signName || DB.lab.specialist || '')}" style="width:100%"></div>
+    </div>
+    <div class="grid2" style="margin-top:4px">
+      <div class="field"><label>✍️ صورة التوقيع — بتحط سكان توقيع الأخصائي في آخر كل صفحة (اختياري)</label>
+        <input type="file" accept="image/*" class="inp2" id="rs-signImg" onchange="stUploadSignImg(this)" style="width:100%">
+        ${rs.signImg ? `<div style="margin-top:6px"><img src="${rs.signImg}" style="max-height:44px;border-radius:8px;border:1px solid var(--line)"> <a href="javascript:stClearSignImg()" style="color:#c62828;font-size:12px">✖ إزالة</a></div>` : ''}
+      </div>
+      <div class="field"><label>عناصر التقرير</label>
+        <div class="chk-grid">
+          <label class="chk"><input type="checkbox" id="rs-showQR" ${rs.showQR ? 'checked' : ''}> صندوق البيانات (QR)</label>
+          <label class="chk"><input type="checkbox" id="rs-showTitle" ${rs.showTitle ? 'checked' : ''}> عنوان التقرير</label>
+          <label class="chk"><input type="checkbox" id="rs-showSign" ${rs.showSign ? 'checked' : ''}> التوقيع</label>
+          <label class="chk"><input type="checkbox" id="rs-showWM" ${rs.showWM ? 'checked' : ''}> العلامة المائية الخلفية</label>
+          <label class="chk"><input type="checkbox" id="rs-showSched" ${rs.showSched ? 'checked' : ''}> مواعيد العمل في الأسفل</label>
+          <label class="chk"><input type="checkbox" id="rs-showFootWM" ${rs.showFootWM ? 'checked' : ''}> سطر CSL في الأسفل</label>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-p btn-s" onclick="stSaveRset()">💾 حفظ إعدادات الطباعة</button>
+      <button class="btn btn-t btn-s" onclick="stPreviewReport()">👁️ معاينة تقرير تجريبي</button>
+    </div>
   </div>
   <div class="card"><h3>🏷️ قائمة الأسعار (${DB.tests.length} تحليل)</h3>
     <div class="toolbar">
@@ -1563,6 +1762,35 @@ function stSaveRef(id) {
 function saveSuper() { META.superUser = { user: $('#sp-user').value.trim(), pass: $('#sp-pass').value }; saveMeta(); toast('✅ تم الحفظ'); }
 function stSaveLab() { DB.lab.name = $('#st-name').value.trim(); DB.lab.schedule = $('#st-schedule').value.trim(); save(); toast('✅ تم الحفظ'); renderSettings(); }
 function stSaveHeader() { DB.lab.header = { ...DB.lab.header, title: $('#st-h-title').value.trim(), address: $('#st-h-address').value.trim(), phones: $('#st-h-phones').value.trim(), footer: $('#st-h-footer').value.trim() }; save(); toast('✅ تم حفظ الترويسة'); }
+
+function stSaveRset(silent) {
+  const g = id => document.getElementById(id);
+  if (!g('rs-margTop')) return;
+  DB.lab.rset = {
+    margTop: +g('rs-margTop').value || 8,
+    margSide: +g('rs-margSide').value || 10,
+    font: +g('rs-font').value || 13,
+    lineH: +g('rs-lineH').value || 7.5,
+    title: (g('rs-title').value || '').trim() || 'تقرير نتائج التحاليل',
+    signName: (g('rs-signName').value || '').trim(),
+    signImg: (DB.lab.rset && DB.lab.rset.signImg) || '',
+    showQR: g('rs-showQR').checked,
+    showTitle: g('rs-showTitle').checked,
+    showSign: g('rs-showSign').checked,
+    showWM: g('rs-showWM').checked,
+    showSched: g('rs-showSched').checked,
+    showFootWM: g('rs-showFootWM').checked,
+  };
+  save();
+  if (!silent) { toast('✅ تم حفظ إعدادات الطباعة'); renderSettings(); }
+}
+function stUploadSignImg(inp) {
+  const f = inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { DB.lab.rset = DB.lab.rset || {}; DB.lab.rset.signImg = r.result; save(); toast('✅ تم رفع صورة التوقيع'); renderSettings(); };
+  r.readAsDataURL(f);
+}
+function stClearSignImg() { if (DB.lab.rset) delete DB.lab.rset.signImg; save(); renderSettings(); }
 /* صورة رأس التقرير — بتحفظ فور اختيارها */
 function stUploadHeaderImg(inp) {
   const f = inp.files && inp.files[0]; if (!f) return;
