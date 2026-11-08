@@ -63,14 +63,24 @@
 
   /* ---------- تهيئة Firebase + دخول مجهول + مستمعين ---------- */
   window.cloudInit = function () {
+    /* لو سكربتات Firebase لسه بتحمل — ممنوش نتجاهلها، جرّب تاني مع حدث load */
+    if (typeof firebase === 'undefined' || !firebase.database) {
+      if (!CLOUD._scheduled) {
+        CLOUD._scheduled = true;
+        window.addEventListener('load', cloudInit);
+        setTimeout(cloudInit, 4000);
+      }
+      CLOUD.ok = false;
+      updateSyncBadge();
+      return;
+    }
     if (CLOUD._init) return;
     CLOUD._init = true;
-    CLOUD.ok = (typeof firebase !== 'undefined') && !!firebase.database;
+    CLOUD.ok = true;
     window.addEventListener('online', onBackOnline);
     window.addEventListener('offline', () => updateSyncBadge());
     setInterval(() => { /* نبضة خفيفة — المستمعين بيعملوا المزامنة اللحظية */ }, 45000);
     updateSyncBadge();
-    if (!CLOUD.ok) { updateSyncBadge(); return; }
     try { firebase.initializeApp(FB_CONFIG); } catch (e) {}
     CLOUD.fb = firebase.database();
     tryAuth(0);
@@ -242,7 +252,7 @@
 
   /* ---------- دفع/سحب بيانات المعمل (آخر تعديل يكسب بالتاريخ) ---------- */
   async function cloudPushLab() {
-    if (!CLOUD.ready || typeof LABID === 'undefined' || !LABID || typeof DB === 'undefined' || !DB) return;
+    if (!CLOUD.ready || !CLOUD.fb || typeof LABID === 'undefined' || !LABID || typeof DB === 'undefined' || !DB) return;
     const payload = JSON.stringify(DB);
     if (payload === CLOUD.lastLabApplied) { updateSyncBadge('ok', '☁️ متزامن مع السحابة'); return; }
     updateSyncBadge('busy', '⏳ جاري المزامنة…');
@@ -261,7 +271,7 @@
   }
 
   window.cloudPullLab = function (labId) {
-    if (!CLOUD.ok) return;
+    if (!CLOUD.ok || !CLOUD.fb) return;
     if (CLOUD.ready) attachLabListener(labId);
     CLOUD.fb.ref('csl/labs/' + labId).once('value').then(snap => {
       const doc = snap.val();
