@@ -72,6 +72,7 @@ function loadLab(id) {
   LABID = id;
   try { DB = JSON.parse(localStorage.getItem(labKey(id))); } catch (e) { DB = null; }
   if (!DB || !DB.tests) { DB = seed(); save(); }
+  catalogFixes();
   if (typeof cloudPullLab === 'function') cloudPullLab(id);
 }
 
@@ -821,10 +822,12 @@ function renderResults() {
   <div id="res-list"><div class="card"><div class="empty">👆 اختار اسم المريض من القائمة وهتظهر زياراته وتحاليله تحت</div></div></div>`);
 }
 function resPickPat() {
-  const pid = $('#res-pat').value;
-  if (!pid) { $('#res-list').innerHTML = '<div class="card"><div class="empty">👆 اختار اسم المريض من القائمة وهتظهر زياراته وتحاليله تحت</div></div>'; return; }
+  const sel = document.getElementById('res-pat'), list = document.getElementById('res-list');
+  if (!sel || !list) return;
+  const pid = sel.value;
+  if (!pid) { list.innerHTML = '<div class="card"><div class="empty">👆 اختار اسم المريض من القائمة وهتظهر زياراته وتحاليله تحت</div></div>'; return; }
   const vs = DB.visits.filter(v => v.patientId === pid);
-  $('#res-list').innerHTML = resListHtml(vs);
+  list.innerHTML = resListHtml(vs);
 }
 /* حالة التحليل في سير المراجعة: منتظر ← بنتيجة ← متحقق ← مُراجع */
 function resPill(t) {
@@ -858,7 +861,7 @@ function resListHtml(vs) {
         <span><button class="btn btn-g btn-s" onclick="resReport('${v.id}')" title="كل التحاليل في تقرير واحد">🖨️ تقرير شامل (الكل)</button></span></h3>
       <div style="overflow-x:auto"><table><tr><th>التحليل</th><th>الحالة</th><th>النتيجة</th><th>التحقق</th><th>المراجعة</th><th>طباعة</th></tr>
       ${v.tests.map((t, i) => { const tt = testById(t.testId);
-        return `<tr><td style="font-weight:700">${esc(tt?.name)}</td>
+        return `<tr><td style="font-weight:700">${esc(tt?.name)} <button class="btn btn-o btn-s" style="padding:2px 7px;font-size:12px" onclick="resEditTest('${v.id}',${i})" title="تعديل بيانات التحليل: الاسم والمعدل والوحدة والحسابات">⚙️</button></td>
         <td>${resPill(t)}</td>
         <td><button class="btn btn-p btn-s" onclick="resWork('${v.id}',${i})">${t.status === 'done' ? 'تعديل' : 'إدخال'}</button></td>
         <td>${t.status === 'done' ? (t.verified ? `<span style="color:#0b6e62;font-size:12px;white-space:nowrap">✔ ${esc(String(t.verified.by || '').split(' ')[0])}</span>` : `<button class="btn btn-o btn-s" onclick="resVerify('${v.id}',${i})">🔍 تحقق</button>`) : '<span style="color:#999">—</span>'}</td>
@@ -893,8 +896,8 @@ function resWork(visitId, idx) {
     </div>
     <div class="results-grid" style="margin-top:12px">
     ${fields.map((f, i) => { const val = t.results[f[0]] ?? '';
-      return `<div class="res-field"><label>${esc(f[0])}${f[1] ? ` (${esc(f[1])})` : ''}</label>
-      <input id="rf-${i}" value="${esc(val)}" oninput="resFlagLive(${i},'${esc(f[2] || '')}','${esc(f[3] || '')}')">
+      return `<div class="res-field"><label>${esc(f[0])}${f[1] ? ` (${esc(f[1])})` : ''}${f[4] ? ` <span title="خانة محسوبة تلقائياً" style="background:#e3f4f1;color:#0b6e62;border-radius:6px;padding:0 5px;font-size:10px">⚙️ محسوبة</span>` : ''}</label>
+      <input id="rf-${i}" ${f[4] ? 'readonly' : ''} ${f[4] ? 'style="background:#f2f7fa;font-weight:700;color:#122a5c"' : ''} value="${esc(val)}" oninput="resFlagLive(${i},'${esc(f[2] || '')}','${esc(f[3] || '')}')">
       ${f[2] || f[3] ? `<div class="rf num">( ${esc(f[2])} - ${esc(f[3])} ) <span id="rfl-${i}"></span></div>` : ''}${prevMap[f[0]] ? `<div class="rf" style="color:#0b6e62;font-size:11px">📈 آخر نتيجة: <b>${esc(prevMap[f[0]].val)}</b> <span class="num">(${prevMap[f[0]].date})</span></div>` : ''}</div>`;
     }).join('')}
     </div>
@@ -904,6 +907,9 @@ function resWork(visitId, idx) {
       <button class="btn btn-g" onclick="resSave('${visitId}',${idx},true)">💾 حفظ + تقرير</button>
       <button class="btn btn-o" onclick="closeModal()">إغلاق</button>
     </div>`);
+  window.__resFields = fields;
+  fields.forEach((f, i) => { const el = document.getElementById('rf-' + i); if (el && !f[4]) el.addEventListener('input', () => resCalcFields()); });
+  resCalcFields();
   fields.forEach((f, i) => { if (t.results[f[0]] != null && t.results[f[0]] !== '') resFlagLive(i, f[2] || '', f[3] || ''); });
 }
 /* تظليل تلقائي: أحمر لو عالي/واطي عن المرجع */
@@ -921,7 +927,7 @@ function resSave(visitId, idx, report) {
   const fields = (tt?.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
   const r = {};
   fields.forEach((f, i) => { const el = $('#rf-' + i); if (el) r[f[0]] = el.value.trim(); });
-  t.results = r; t.notes = $('#rf-notes').value.trim(); t.status = 'done'; t.doneAt = new Date().toISOString();
+  t.results = computeTestResults(fields, r); t.notes = $('#rf-notes').value.trim(); t.status = 'done'; t.doneAt = new Date().toISOString();
   save(); closeModal(); toast('✅ تم حفظ نتيجة ' + (tt?.name || ''));
   resPickPat();
   if (report) resReport(visitId);
@@ -949,8 +955,8 @@ function buildReportHtml(v, p, doneTests, opts) {
     if (!isNaN(hh) && n > hh) return ['H', 'color:#c62828'];
     return ['', ''];
   };
-  const rowHtml = (f, t) => {
-    const val = (t.results || {})[f[0]] ?? '';
+  const rowHtml = (f, t, res) => {
+    const val = (res || t.results || {})[f[0]] ?? '';
     const [fg, st] = flagOf(val, f[2], f[3]);
     const ref = (f[2] || f[3]) ? `${esc(f[2] || '')} - ${esc(f[3] || '')}` : '—';
     return `<tr class="rr">
@@ -961,12 +967,14 @@ function buildReportHtml(v, p, doneTests, opts) {
   };
   const groups = doneTests.map(t => { const tt = testById(t.testId);
     const fields = (tt && tt.fields && tt.fields.length) ? tt.fields : [['النتيجة', '', '', '']];
+    const res = computeTestResults(fields, t.results || {});
     const stamp = [];
     if (t.verified) stamp.push('تحقق: ' + esc((t.verified.by || '')) + ' — ' + dmy(t.verified.at));
     if (t.reviewed) stamp.push('مراجعة: ' + esc((t.reviewed.by || '')) + ' — ' + dmy(t.reviewed.at));
     return `<tbody class="grp">
       <tr class="grp-head"><td colspan="3">${esc(tt ? tt.name : '')}${stamp.length ? `<span class="grp-stamp">${stamp.join(' • ')}</span>` : ''}</td></tr>
-      ${fields.map(f => rowHtml(f, t)).join('')}
+      ${fields.map(f => rowHtml(f, t, res)).join('')}
+      ${tt && tt.cv ? `<tr class="grp-curve"><td colspan="3">${gttCurveSvg(fields, t.results || {})}</td></tr>` : ''}
       ${t.notes ? `<tr class="grp-notes"><td colspan="3"><b>ملاحظات:</b> ${esc(t.notes)}</td></tr>` : ''}
     </tbody>`; }).join('');
   const allRev = doneTests.every(t => t.reviewed);
@@ -1836,6 +1844,7 @@ function stRefreshCatalog() {
   DB.tests.forEach(t => { if (/^yp_|^yt_|^casa_/.test(t.id)) priceKeep[t.name] = t.price; });
   fresh.forEach(t => { if (priceKeep[t.name]) t.price = priceKeep[t.name]; });
   DB.tests = fresh.concat(mine);
+  catalogFixes();
   save(); renderSettings(); toast('✅ الكتالوج اتحدث — ' + fresh.length + ' تحليل');
 }
 function stDelTest(id) { if (!confirm('حذف التحليل؟')) return; DB.tests = DB.tests.filter(t => t.id !== id); save(); stPriceSearch(); }
@@ -1892,4 +1901,157 @@ window.addEventListener('message', function (e) {
 window.MT_SSO_HANDLE = function (d) {
   if (d.site !== 'csl') return;
   try { setSession({ type: 'super', name: 'الموزّع' }); go(''); route(); } catch (e) {}
-};
+};/* ============================================================
+   محرك المعادلات + محرر بيانات التحليل من شاشة النتائج
+   خانة الحساب: عنصر خامس في الحقل بصيغة زي  #0/#1*100
+   (#0 = أول خانة، #1 = تانية خانة وهكذا — بتتكسب تلقائياً)
+   ============================================================ */
+function calcFieldValue(formula, vals) {
+  if (!formula) return null;
+  try {
+    const expr = String(formula).replace(/#(\d+)/g, (m, i) => {
+      const v = vals[+i];
+      return (v == null || isNaN(v)) ? 'NaN' : '(' + v + ')';
+    });
+    if (/NaN/.test(expr)) return null;
+    if (!/^[\d\s+\-*/().%]+$/.test(expr)) return null;
+    let e = expr.replace(/%/g, '/100');
+    const r = Function('"use strict";return (' + e + ')')();
+    if (typeof r !== 'number' || !isFinite(r)) return null;
+    return Math.round(r * 100) / 100;
+  } catch (e) { return null; }
+}
+/* نتائج التحليل بعد حساب الخانات المحسوبة (الحساب دايماً يكسب على المخزن) */
+function computeTestResults(fields, results) {
+  const out = Object.assign({}, results || {});
+  const vals = fields.map(f => parseFloat(out[f[0]]));
+  fields.forEach((f, i) => {
+    if (!f[4]) return;
+    const v = calcFieldValue(f[4], vals);
+    out[f[0]] = (v == null) ? (out[f[0]] || '') : String(v);
+  });
+  return out;
+}
+/* داخل شاشة الإدخال: أعد حساب الخانات المحسوبة لحظياً */
+function resCalcFields() {
+  const fields = window.__resFields || [];
+  fields.forEach((f, i) => {
+    if (!f[4]) return;
+    const el = document.getElementById('rf-' + i); if (!el) return;
+    const vals = fields.map(ff => { const e2 = document.getElementById('rf-' + fields.indexOf(ff)); return e2 ? parseFloat(e2.value) : NaN; });
+    const v = calcFieldValue(f[4], vals);
+    el.value = (v == null) ? '' : v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+/* زرار ⚙️ جنب التحليل — يفتح بيانات التحليل كاملة للتعديل */
+function resEditTest(visitId, idx) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v && v.tests[idx]; const tt = testById(t.testId);
+  if (!tt) return toast('⚠️ التحليل مش موجود');
+  const fields = (tt.fields && tt.fields.length) ? tt.fields.map(f => [...f]) : [['', '', '', '', '']];
+  modal(`<h3>⚙️ بيانات التحليل: ${esc(tt.name)}</h3>
+    <p style="font-size:12px;color:#7a8aa0;margin:4px 0 10px">أي تعديل هنا بيتحفظ على التحليل نفسه في الكتالوج — وهيسمع في كل الحالات والتقارير.</p>
+    <div class="toolbar" style="margin-bottom:8px">
+      <input class="inp2" id="ret-name" value="${esc(tt.name)}" placeholder="اسم التحليل" style="flex:2;min-width:160px">
+      <input class="inp2 num" id="ret-price" type="number" value="${tt.price || 0}" placeholder="السعر" style="width:90px">
+      <label style="font-size:12px;display:flex;align-items:center;gap:5px;white-space:nowrap"><input type="checkbox" id="ret-cv" ${tt.cv ? 'checked' : ''}> 📈 كيرف (منحنى)</label>
+    </div>
+    <div style="font-size:11.5px;color:#0b6e62;background:#e3f4f1;border-radius:8px;padding:6px 10px;margin-bottom:8px">💡 خانة «حساب»: اكتب معادلة بالحقول بالترتيب — مثال: <b class="num">#0/#1*100</b> يعني خانة ١ ÷ خانة ٢ × ١٠٠، والخانة المحسوبة بتتعبى لوحدها.</div>
+    <div id="ret-rows">${fields.map((f, i) => `<div class="toolbar" style="margin-bottom:6px">
+      <input class="inp2" placeholder="اسم القياس" value="${esc(f[0])}" style="flex:2;min-width:130px">
+      <input class="inp2" placeholder="الوحدة" value="${esc(f[1])}" style="width:85px">
+      <input class="inp2 num" placeholder="من" value="${esc(f[2])}" style="width:65px">
+      <input class="inp2 num" placeholder="إلى" value="${esc(f[3])}" style="width:65px">
+      <input class="inp2 num" dir="ltr" placeholder="#0/#1*100" value="${esc(f[4] || '')}" style="width:95px" title="معادلة الحساب (اختياري)">
+      <button class="btn btn-r btn-s" onclick="this.parentElement.remove()">✖</button>
+    </div>`).join('')}</div>
+    <div class="toolbar"><button class="btn btn-o btn-s" onclick="resAddTestRow()">➕ إضافة قياس</button></div>
+    <div class="modal-actions">
+      <button class="btn btn-p" onclick="resSaveTestEdit('${visitId}',${idx})">💾 حفظ بيانات التحليل</button>
+      <button class="btn btn-o" onclick="closeModal()">إلغاء</button>
+    </div>`);
+}
+function resAddTestRow() {
+  $('#ret-rows').insertAdjacentHTML('beforeend', `<div class="toolbar" style="margin-bottom:6px">
+    <input class="inp2" placeholder="اسم القياس" style="flex:2;min-width:130px">
+    <input class="inp2" placeholder="الوحدة" style="width:85px">
+    <input class="inp2 num" placeholder="من" style="width:65px">
+    <input class="inp2 num" placeholder="إلى" style="width:65px">
+    <input class="inp2 num" dir="ltr" placeholder="#0/#1*100" style="width:95px" title="معادلة الحساب (اختياري)">
+    <button class="btn btn-r btn-s" onclick="this.parentElement.remove()">✖</button>
+  </div>`);
+}
+function resSaveTestEdit(visitId, idx) {
+  const v = DB.visits.find(x => x.id === visitId); const t = v && v.tests[idx]; const tt = testById(t.testId);
+  if (!tt) return;
+  const name = $('#ret-name').value.trim();
+  if (!name) return toast('⚠️ اسم التحليل فاضي');
+  tt.name = name;
+  tt.price = +$('#ret-price').value || tt.price || 0;
+  if ($('#ret-cv').checked) tt.cv = 1; else delete tt.cv;
+  const rows = [...document.querySelectorAll('#ret-rows .toolbar')];
+  const fields = rows.map(r => [...r.querySelectorAll('input')].map(i => i.value.trim())).filter(f => f[0]);
+  tt.fields = fields;
+  save(); closeModal(); toast('✅ تم حفظ بيانات التحليل — هتسمع في كل الحالات');
+  if (typeof resPickPat === 'function') resPickPat();
+}
+/* ---------- كيرف منحنى اختبار تحمل الغلوكوز (SVG داخل التقرير — يطبع ويتعاين) ---------- */
+function gttCurveSvg(fields, results) {
+  const res = computeTestResults(fields, results);
+  const pts = fields.map(f => ({ l: f[0], v: parseFloat(res[f[0]]) })).filter(p => !isNaN(p.v));
+  if (pts.length < 2) return '';
+  const W = 175, H = 62, P = 12;
+  const vals = pts.map(p => p.v);
+  let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  lo = Math.min(lo, 70) * 0.94; hi = Math.max(hi, 140) * 1.05;
+  const X = i => W - P - i * (W - 2 * P) / (pts.length - 1); /* RTL: أول عينة على اليمين */
+  const Y = v => P + (hi - v) / (hi - lo) * (H - 2 * P);
+  let grid = '';
+  [70, 100, 140].forEach(g => {
+    if (g > lo && g < hi)
+      grid += `<line x1="${P}" y1="${Y(g)}" x2="${W - P}" y2="${Y(g)}" stroke="#ddd" stroke-dasharray="3,3"/>` +
+              `<text x="${P + 1}" y="${Y(g) - 1.2}" font-size="5.5" fill="#999">${g}</text>`;
+  });
+  const line = pts.map((p, i) => `${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+  const dots = pts.map((p, i) =>
+    `<circle cx="${X(i)}" cy="${Y(p.v)}" r="2.2" fill="#0d1b3e"/>` +
+    `<text x="${X(i)}" y="${Y(p.v) - 4}" font-size="6" font-weight="bold" text-anchor="middle" fill="#122a5c">${p.v}</text>` +
+    `<text x="${X(i)}" y="${H - 1}" font-size="5.8" text-anchor="middle" fill="#555">${esc(p.l)}</text>`).join('');
+  return `<svg width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="display:block;margin:2mm auto;background:#fbfcff;border:1px solid #dfe6f5;border-radius:2mm">${grid}<polyline points="${line}" fill="none" stroke="#1e5eff" stroke-width="1.4"/>${dots}</svg>`;
+}
+/* ---------- ترقيع تلقائي للكتالوج: معدلات ووحدات ومعادلات محسوبة ---------- */
+/* بيشتغل بعد كل تحميل وبيملأ بس اللي فاضي — آمن ومتكرر */
+const CATALOG_FIXES = [
+  { re: /albumin\s*\/\s*creatinine ratio \(a\/c ?%\)/i,
+    fields: [['Urine Albumin', 'mg/dl', '', ''], ['Urine Creatinine', 'mg/dl', '', ''], ['A/C %', '%', '', '30', '#0/#1*100']] },
+  { re: /urine albumin\/creatinine ratio \(acr\)/i,
+    fields: [['Urine Albumin', 'mg/dl', '', ''], ['Urine Creatinine', 'mg/dl', '', ''], ['ACR', 'mg/g', '', '30', '#0/#1*1000']] },
+  { re: /^alb\/creat ratio$/i,
+    fields: [['Urine Albumin', 'mg/dl', '', ''], ['Urine Creatinine', 'mg/dl', '', ''], ['Alb/Creat ratio', 'mg/g', '', '30', '#0/#1*1000']] },
+  { re: /prothrombin time \(pt\)/i,
+    fields: [['PT', 'sec', '11', '14'], ['Control', 'sec', '11', '13.5'], ['INR', '', '0.9', '1.1', '#0/#1']] },
+  { re: /calcium\s*\/\s*creatinine\s*ratio/i,
+    fields: [['Urine Calcium', 'mg/dl', '', ''], ['Urine Creatinine', 'mg/dl', '', ''], ['Ca/Cr ratio', 'mg/mg', '', '0.2', '#0/#1']] },
+  { re: /glucose tolerance curve/i,
+    cv: 1,
+    fields: [['Fasting', 'mg/dl', '70', '100'], ['1/2 Hour', 'mg/dl', '', '170'], ['1 Hour', 'mg/dl', '', '185'], ['2 Hours', 'mg/dl', '', '140'], ['3 Hours', 'mg/dl', '70', '120']] },
+];
+function catalogFixes() {
+  if (!DB || !DB.tests) return;
+  let changed = false;
+  CATALOG_FIXES.forEach(fx => {
+    DB.tests.forEach(t => {
+      if (!fx.re.test(t.name || '')) return;
+      if (fx.cv) { if (!t.cv) { t.cv = 1; changed = true; } }
+      if (!t.fields || !t.fields.length) { t.fields = fx.fields.map(f => [...f]); changed = true; }
+    });
+  });
+  /* تحليل ناقص: Calcium / Creatinine ratio — بيضاف لو مش موجود أصلاً */
+  const hasCaCr = DB.tests.some(t => /calcium.*creatinine.*ratio|ca\s*\/\s*cr/i.test(t.name || ''));
+  if (!hasCaCr) {
+    let mx = 0; DB.tests.forEach(t => { const m = /^t(\d+)$/.exec(t.id || ''); if (m) mx = Math.max(mx, +m[1]); });
+    DB.tests.push({ id: 'yt_' + (mx + 1), name: 'Urine Calcium/Creatinine ratio (Ca/Cr)', price: 150, fields: [['Urine Calcium', 'mg/dl', '', ''], ['Urine Creatinine', 'mg/dl', '', ''], ['Ca/Cr ratio', 'mg/mg', '', '0.2', '#0/#1']], cat: 'كيميا وبايوكيميا' });
+    changed = true;
+  }
+  if (changed) save();
+}
