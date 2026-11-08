@@ -149,7 +149,9 @@ function renderLogin() {
     </div>
     <div id="login-body"></div>
     <button class="btn btn-o" style="width:100%;margin-top:12px" onclick="demoLogin()">👁️ دخول تجريبي — معاينة فقط</button>
+    <div id="ver-stamp" style="text-align:center;color:#5a6b8c;font-size:10px;margin-top:10px">…</div>
   </div></div>`;
+  try { $('#ver-stamp').textContent = 'الإصدار: ' + (window.APP_VERSION || '') + ' — لو رقم الإصدار قديم، استنى ثواني والموقع هيتحدّث لوحده'; } catch (e) {}
   loginTab(loginMode);
 }
 function loginTab(m) {
@@ -220,6 +222,15 @@ function doSuperLogin() {
   const { user, pass } = { user: $('#lg-user').value.trim(), pass: $('#lg-pass').value };
   if (user === META.superUser.user && pass === META.superUser.pass) {
     setSession({ type: 'super', name: 'الموزّع' }); go(''); route();
+    /* نجيب معاملات الموزّع من السحابة تلقائياً أول ما يدخل */
+    if (window.CLOUD && CLOUD.ready) {
+      cloudPullMetaAwait().then(changed => { if (changed) { try { renderDistributor(); } catch (e) {} } }).catch(() => {});
+    } else if (window.CLOUD && !CLOUD.gaveUp) {
+      const tryPull = setInterval(() => {
+        if (CLOUD.ready) { clearInterval(tryPull); cloudPullMetaAwait().then(c => { if (c) { try { renderDistributor(); } catch (e) {} } }).catch(() => {}); }
+        if (CLOUD.gaveUp) clearInterval(tryPull);
+      }, 3000);
+    }
   } else toast('⚠️ بيانات الموزّع غير صحيحة');
 }
 function lgLabChange() {
@@ -289,6 +300,10 @@ function renderDistributor() {
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:700;white-space:nowrap;cursor:pointer"><input type="checkbox" id="dl-casa"> تفعيل CASA معاه (كود واحد)</label>
         <button class="btn btn-t" onclick="distCreate()">إنشاء معمل + كود تفعيل</button>
       </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--line)">
+        <button class="btn btn-o btn-s" onclick="distCloudPull()">☁️ جلب المعاملات من السحابة</button>
+        <span style="font-size:11.5px;color:var(--mut)">لو شغلت على جهاز تاني قبل كده — دوس هنا وكل معاملاتك هتظهر (البيانات الأصلية على السحابة مش على التليفون)</span>
+      </div>
     </div>
     <div class="card"><h3>🏢 المعملات</h3>
       ${META.labs.length ? `<table><tr><th>الاسم</th><th>كود الدخول</th><th>الرابط المباشر</th><th>الحالة</th><th>إجراءات</th></tr>
@@ -306,6 +321,20 @@ function renderDistributor() {
     </div>
   </div>`;
   updateSyncBadge();
+}
+/* سحب بيانات الموزّع من السحابة يدوياً — بيدمج المعاملات بالـ id */
+async function distCloudPull() {
+  if (!navigator.onLine) return toast('⚠️ مفيش نت على الجهاز');
+  if (!window.CLOUD || !CLOUD.ready) return toast('⚠️ جاري الاتصال بالسحابة — استنى ثواني ودوس تاني');
+  toast('⏳ بجيب بيانات الموزّع من السحابة…');
+  try {
+    await cloudPullMetaAwait();
+    renderDistributor();
+    const n = (META.labs || []).length;
+    toast(n ? '✅ اتجابت ' + n + ' معمل من السحابة' : '☁️ السحابة مفيهاش معملات — أنشئ معملك الأول');
+  } catch (e) {
+    toast('⚠️ تعذّر السحب — اتأكد من النت وجرب تاني');
+  }
 }
 function distCreate() {
   const name = $('#dl-name').value.trim();
