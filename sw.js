@@ -1,5 +1,5 @@
 /* CSL service worker — يخلي النظام يشتغل أوفلاين وينفع يتثبت كتطبيق */
-const CACHE = 'csl-v7';
+const CACHE = 'csl-v8';
 const CORE = [
   './',
   './index.html',
