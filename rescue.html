@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>أداة استرجاع بيانات CSL</title>
+<style>
+  body { font-family: system-ui, 'Segoe UI', Tahoma, sans-serif; background: #eef2f8; color: #0d1b3e; margin: 0; padding: 20px; }
+  .box { max-width: 620px; margin: 0 auto; background: #fff; border-radius: 16px; padding: 26px; box-shadow: 0 10px 30px rgba(13,27,62,.12); }
+  h1 { font-size: 1.3rem; margin: 0 0 8px; }
+  p { font-size: .92rem; line-height: 1.9; color: #445; margin: 6px 0; }
+  .lab { border: 1px solid #dde4f0; border-radius: 12px; padding: 14px; margin-top: 12px; }
+  .lab b { display: block; margin-bottom: 6px; }
+  .lab small { color: #667; display: block; margin-bottom: 10px; line-height: 1.8; }
+  button { background: #1e5eff; color: #fff; border: 0; border-radius: 10px; padding: 12px 22px; font-size: .95rem; font-weight: 700; cursor: pointer; }
+  button.all { background: #0fa08c; width: 100%; margin-top: 14px; padding: 15px; font-size: 1.05rem; }
+  .none { text-align: center; padding: 30px 10px; color: #888; }
+  .big { font-size: 3rem; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="box">
+  <h1>🚑 أداة استرجاع بيانات نظام CSL</h1>
+  <p>الأداة دي بتدور على بيانات CSL المحفوظة في المتصفح <b>ده تحديدًا</b>. لو الجهاز ده فتح النظام قبل كده وفيه بيانات، هتقدر تنزّلها وتسترجعها.</p>
+  <div id="out"><p style="text-align:center">⏳ جاري البحث...</p></div>
+</div>
+<script>
+(function () {
+  var out = document.getElementById('out');
+  var found = [];
+  try {
+    var meta = localStorage.getItem('csl_meta_v1');
+    if (meta) {
+      try {
+        var m = JSON.parse(meta);
+        if (m && Array.isArray(m.labs)) {
+          m.labs.forEach(function (lab) {
+            var raw = localStorage.getItem('csl_v1_' + lab.id);
+            if (!raw) return;
+            try {
+              var d = JSON.parse(raw);
+              found.push({ id: lab.id, name: (d.lab && d.lab.name) || lab.name || lab.id, patients: (d.patients || []).length, visits: (d.visits || []).length, payments: (d.payments || []).length, raw: raw, full: d });
+            } catch (e) {}
+          });
+        }
+      } catch (e) {}
+    }
+    // دور على أي مفتاح تاني يبدأ بـ csl
+    for (var i = 0; i < localStorage.length; i++) {
+      var k = localStorage.key(i);
+      if (k && k.indexOf('csl') === 0 && k !== 'csl_meta_v1' && k.indexOf('csl_v1_') !== 0) {
+        var rv = localStorage.getItem(k);
+        if (rv && rv.length > 50) {
+          try { var d2 = JSON.parse(rv); found.push({ id: k, name: k, patients: (d2.patients || []).length, visits: (d2.visits || []).length, payments: (d2.payments || []).length, raw: rv, full: d2 }); } catch (e) {}
+        }
+      }
+    }
+  } catch (e) { out.innerHTML = '<div class="none"><div class="big">⚠️</div>حصل خطأ أثناء البحث</div>'; return; }
+
+  if (!found.length) {
+    out.innerHTML = '<div class="none"><div class="big">😔</div>للأسف مفيش أي بيانات CSL محفوظة في المتصفح ده<br><small>جرب تفتح الأداة دي من أي جهاز أو متصفح تاني استخدمت النظام منه قبل كده</small></div>';
+    return;
+  }
+  var html = '<p style="color:#2e7d32;font-weight:700">✅ لقيت بيانات! نزّلها فورًا:</p>';
+  found.forEach(function (f, idx) {
+    html += '<div class="lab"><b>🏥 ' + (f.name || 'معمل') + '</b>' +
+      '<small>مرضى: <b>' + f.patients + '</b> — زيارات: <b>' + f.visits + '</b> — مدفوعات: <b>' + f.payments + '</b></small>' +
+      '<button onclick="dl(' + idx + ')">⬇️ تنزيل نسخة ' + (f.name || '') + '</button></div>';
+  });
+  html += '<button class="all" onclick="dlAll()">⬇️ تنزيل الكل في ملف واحد</button>';
+  out.innerHTML = html;
+  window.__found = found;
+  window.dl = function (i) {
+    var f = window.__found[i];
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify({ app: 'csl', data: f.full })], { type: 'application/json' }));
+    a.download = 'نسخة-احتياطية-' + (f.name || 'csl').replace(/[\\/:*?"<>|]/g, '-') + '.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  window.dlAll = function () {
+    var pack = { app: 'csl-rescue', at: new Date().toISOString(), labs: {} };
+    window.__found.forEach(function (f) { pack.labs[f.id] = f.full; });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(pack)], { type: 'application/json' }));
+    a.download = 'نسخة-احتياطية-CSL-كاملة.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+})();
+</script>
+</body>
+</html>
