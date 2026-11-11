@@ -1,0 +1,48 @@
+name: csl-diagnostics
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check CSL cloud data
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          KEY = "AIzaSyAPawpCwihRHOaPjMzhhcsSDa9WAy0Qx-Q"
+          DB = "https://sakrlab2026-default-rtdb.firebaseio.com"
+          def req(url, data=None):
+              r = urllib.request.Request(url, data=json.dumps(data).encode() if data else None,
+                                         headers={"Content-Type":"application/json"})
+              try:
+                  with urllib.request.urlopen(r, timeout=30) as f:
+                      return json.loads(f.read() or b"null")
+              except Exception as e:
+                  return {"__err": str(e)[:200]}
+          tok = req(f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={KEY}", {"returnSecureToken": True})
+          if "idToken" not in tok:
+              print("AUTH_FAILED", tok); raise SystemExit(0)
+          t = tok["idToken"]
+          print("AUTH OK (anonymous)")
+          meta = req(f"{DB}/csl/meta.json?auth={t}")
+          print("META:", json.dumps(meta, ensure_ascii=False)[:800])
+          labs = req(f"{DB}/csl/labs.json?auth={t}&shallow=true")
+          if isinstance(labs, dict) and "__err" not in labs:
+              for lid in labs:
+                  node = req(f"{DB}/csl/labs/{lid}.json?auth={t}")
+                  if isinstance(node, dict):
+                      d = node.get("d", node)
+                      v = node.get("v"); at = node.get("at")
+                      if isinstance(d, str):
+                          try: d = json.loads(d)
+                          except: pass
+                      if isinstance(d, dict):
+                          pats = d.get("patients") or []
+                          visits = d.get("visits") or []
+                          pays = d.get("payments") or []
+                          print(f"LAB {lid}: v={v} at={at} patients={len(pats)} visits={len(visits)} payments={len(pays)} labName={((d.get('lab') or {}).get('name'))!r}")
+                      else:
+                          print(f"LAB {lid}: v={v} at={at} data_type={type(d).__name__} raw={str(node)[:200]}")
+          else:
+              print("LABS:", json.dumps(labs, ensure_ascii=False)[:400])
+          PY
