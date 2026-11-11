@@ -23,26 +23,17 @@ jobs:
           if "idToken" not in tok:
               print("AUTH_FAILED", tok); raise SystemExit(0)
           t = tok["idToken"]
-          print("AUTH OK (anonymous)")
-          meta = req(f"{DB}/csl/meta.json?auth={t}")
-          print("META:", json.dumps(meta, ensure_ascii=False)[:800])
-          labs = req(f"{DB}/csl/labs.json?auth={t}&shallow=true")
-          if isinstance(labs, dict) and "__err" not in labs:
-              for lid in labs:
-                  node = req(f"{DB}/csl/labs/{lid}.json?auth={t}")
-                  if isinstance(node, dict):
-                      d = node.get("d", node)
-                      v = node.get("v"); at = node.get("at")
-                      if isinstance(d, str):
-                          try: d = json.loads(d)
-                          except: pass
-                      if isinstance(d, dict):
-                          pats = d.get("patients") or []
-                          visits = d.get("visits") or []
-                          pays = d.get("payments") or []
-                          print(f"LAB {lid}: v={v} at={at} patients={len(pats)} visits={len(visits)} payments={len(pays)} labName={((d.get('lab') or {}).get('name'))!r}")
-                      else:
-                          print(f"LAB {lid}: v={v} at={at} data_type={type(d).__name__} raw={str(node)[:200]}")
-          else:
-              print("LABS:", json.dumps(labs, ensure_ascii=False)[:400])
-          PY
+          print("AUTH OK")
+          root = req(f"{DB}/.json?auth={t}&shallow=true")
+          print("ROOT KEYS:", json.dumps(root, ensure_ascii=False)[:1200])
+          csl = req(f"{DB}/csl.json?auth={t}&shallow=true")
+          print("CSL KEYS:", json.dumps(csl, ensure_ascii=False)[:600])
+          sakr = req(f"{DB}/sakr.json?auth={t}&shallow=true")
+          print("SAKR KEYS:", json.dumps(sakr, ensure_ascii=False)[:600])
+          users = req(f"{DB}/users.json?auth={t}&shallow=true")
+          if isinstance(users, dict) and "__err" not in users:
+              print("USERS COUNT:", len(users))
+          bookings = req(f"{DB}/bookings.json?auth={t}&shallow=true")
+          if isinstance(bookings, dict) and "__err" not in bookings:
+              print("BOOKINGS COUNT:", len(bookings))
+PY
