@@ -1640,6 +1640,13 @@ function renderSettings() {
       <button class="btn btn-o" onclick="cloudRestoreNow()">⬇️ استرجاع نسخة السحابة على الجهاز ده</button>
     </div>
   </div>
+  <div class="card"><h3>💾 نسخة احتياطية على ملف (بتحمّلها عندك)</h3>
+    <p style="margin:0 0 10px;font-size:13px;color:#556">حمّل نسخة من بيانات معملك على تليفونك/كمبيوترك — ده أضمن طريق لو السحابة وقعت أو الجهاز اتمسح. اعملها كل فترة.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-p" onclick="stBackupFile()">⬇️ تحميل نسخة احتياطية</button>
+      <label class="btn btn-o" style="cursor:pointer">⬆️ استرجاع من ملف<input type="file" accept="application/json,.json" hidden onchange="stRestoreFile(this)"></label>
+    </div>
+  </div>
   <div class="card"><h3>🏷️ بيانات المعمل</h3>
     <div class="grid2">
       <div class="field"><label>اسم المعمل</label><input class="inp2" id="st-name" value="${esc(DB.lab.name)}" style="width:100%"></div>
@@ -1801,6 +1808,38 @@ function stSaveRef(id) {
 }
 function saveSuper() { META.superUser = { user: $('#sp-user').value.trim(), pass: $('#sp-pass').value }; saveMeta(); toast('✅ تم الحفظ'); }
 function stSaveLab() { DB.lab.name = $('#st-name').value.trim(); DB.lab.schedule = $('#st-schedule').value.trim(); save(); toast('✅ تم الحفظ'); renderSettings(); }
+
+/* نسخة احتياطية على ملف — بتتعمل يدوي من صفحة الإعدادات */
+function stBackupFile() {
+  const payload = { app: 'csl', v: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : ''), at: new Date().toISOString(), data: DB };
+  const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+  const a = document.createElement('a');
+  const d = new Date().toISOString().slice(0, 10);
+  a.href = URL.createObjectURL(blob);
+  a.download = 'نسخة-احتياطية-' + ((DB.lab && DB.lab.name) || 'معمل').replace(/[\\/:*?"<>|]/g, '-') + '-' + d + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  toast('✅ اتنزّلت النسخة الاحتياطية على جهازك');
+}
+function stRestoreFile(inp) {
+  const f = inp.files && inp.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const p = JSON.parse(r.result);
+      const d = p && p.data ? p.data : p;
+      if (!d || !d.lab || !Array.isArray(d.patients) || !Array.isArray(d.visits)) throw new Error('الملف مش نسخة CSL سليمة');
+      const cur = (DB.lab && DB.lab.code) || '';
+      if (cur && d.lab.code !== cur && !confirm('الملف ده خاص بمعمل «' + (d.lab.name || d.lab.code) + '» — هيتسترجع مكان بيانات «' + DB.lab.name + '». متأكد؟')) { inp.value = ''; return; }
+      DB = d;
+      save();
+      toast('✅ تم الاسترجاع من الملف — بياناتك رجعت');
+      setTimeout(() => { try { route(); } catch (e) {} }, 600);
+    } catch (e) { toast('❌ ' + (e.message || 'ملف تالف'), 'error'); }
+    inp.value = '';
+  };
+  r.readAsText(f);
+}
 function stSaveHeader() { DB.lab.header = { ...DB.lab.header, title: $('#st-h-title').value.trim(), address: $('#st-h-address').value.trim(), phones: $('#st-h-phones').value.trim(), footer: $('#st-h-footer').value.trim() }; save(); toast('✅ تم حفظ الترويسة'); }
 
 function stSaveRset(silent) {
