@@ -47,7 +47,14 @@ const SHIFT_TYPES = { morning: 'صباحي ☀️', evening: 'مسائي 🌆', 
 const SHIFT_PRESETS = { morning: { from: '09:00', to: '16:00' }, evening: { from: '16:00', to: '23:00' }, night: { from: '22:00', to: '06:00' }, custom: { from: '', to: '' } };
 const DOWS = [['sat', 'السبت'], ['sun', 'الأحد'], ['mon', 'الاثنين'], ['tue', 'الثلاثاء'], ['wed', 'الأربعاء'], ['thu', 'الخميس'], ['fri', 'الجمعة']];
 const DOW_IDX = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
-function shiftOf(e) { return (e && e.shift && e.shift.days && e.shift.days.length) ? e.shift : null; }
+/* الشيفتات: مصفوفة shifts — والبيانات القديمة (shift واحد) بتتحول تلقائي */
+function shiftsOf(e) {
+  if (e && Array.isArray(e.shifts) && e.shifts.length) return e.shifts;
+  if (e && e.shift && e.shift.days && e.shift.days.length) return [e.shift];
+  return [];
+}
+function shiftOf(e) { const s = shiftsOf(e); return s.length ? s[0] : null; }
+function hasShifts(e) { return shiftsOf(e).length > 0; }
 function hoursBetween(from, to) {
   if (!from || !to) return 0;
   const fh = +from.split(':')[0], fm = +from.split(':')[1] || 0, th = +to.split(':')[0], tm = +to.split(':')[1] || 0;
@@ -57,11 +64,12 @@ function hoursBetween(from, to) {
 }
 function shiftHours(sh) { if (!sh) return 0; return cslNum(sh.hours) || hoursBetween(sh.from, sh.to); }
 function shiftLabel(e) {
-  const sh = shiftOf(e); if (!sh) return '';
-  const days = (sh.days || []).map(d => (DOWS.find(x => x[0] === d) || [d, d])[1]).join('، ');
-  const t = SHIFT_TYPES[sh.type] || 'مخصص ⚙️';
-  const tm = (sh.from && sh.to) ? ' من ' + sh.from + ' لـ ' + sh.to : '';
-  return t + tm + ' · ' + days + ' · ' + shiftHours(sh) + ' ساعة/يوم';
+  const shs = shiftsOf(e); if (!shs.length) return '';
+  return shs.map(sh => {
+    const t = SHIFT_TYPES[sh.type] || 'مخصص ⚙️';
+    const tm = (sh.from && sh.to) ? ' ' + sh.from + '–' + sh.to : '';
+    return t + tm;
+  }).join(' ➕ ');
 }
 function shiftDayCount(m, days) {
   const [y, mm] = m.split('-').map(Number);
@@ -74,97 +82,133 @@ function shiftDayCount(m, days) {
   }
   return c;
 }
-function expectedHours(e, m) { const sh = shiftOf(e); return sh ? Math.round(shiftDayCount(m, sh.days) * shiftHours(sh) * 100) / 100 : 0; }
+function expectedHours(e, m) {
+  const shs = shiftsOf(e); if (!shs.length) return 0;
+  let t = 0;
+  shs.forEach(sh => { t += shiftDayCount(m, sh.days) * shiftHours(sh); });
+  return Math.round(t * 100) / 100;
+}
 function hourRate(e, m, salaryDisp) { const eh = expectedHours(e, m); return eh ? Math.round(cslNum(salaryDisp) / eh * 100) / 100 : 0; }
 function shiftInfoLine(e, salaryDisp) {
   const m = STF.month || curMonth();
   const eh = expectedHours(e, m);
-  return 'المفترض ' + eh + ' ساعة في ' + monthLabel(m) + ' · سعر الساعة: ' + fmt(hourRate(e, m, salaryDisp)) + ' ' + curSym() + ' — الزيادة عن المفترض بتتحسب مكافأة تلقائياً';
+  const lines = shiftsOf(e).map(sh => {
+    const days = (sh.days || []).map(d => (DOWS.find(x => x[0] === d) || [d, d])[1]).join('، ');
+    const t = SHIFT_TYPES[sh.type] || 'مخصص ⚙️';
+    const tm = (sh.from && sh.to) ? ' من ' + sh.from + ' لـ ' + sh.to : '';
+    return '⏱ ' + t + tm + ' · ' + days + ' · ' + shiftHours(sh) + ' ساعة/يوم';
+  });
+  lines.push('المفترض ' + eh + ' ساعة في ' + monthLabel(m) + ' · سعر الساعة: ' + fmt(hourRate(e, m, salaryDisp)) + ' ' + curSym() + ' — الزيادة عن المفترض بتتحسب مكافأة تلقائياً');
+  return lines.join('<br>');
 }
+/* حالة القبض: pending = محفوظ لحين القبض — paid = قبض فعلي — والقديم من غير status = paid */
+function payStatus(p) { return !p ? 'none' : (p.status === 'pending' ? 'pending' : 'paid'); }
+function payStatusPill(p) {
+  const st = payStatus(p);
+  if (st === 'paid') return '<span class="pill p-paid">تم القبض ✓</span>';
+  if (st === 'pending') return '<span class="pill" style="background:rgba(245,158,11,.18);color:#d97706">⏳ محفوظ — لحين القبض</span>';
+  return '';
+}
+/* الخصومات: مصفوفة deds — والقديم deduction+deductReason بيتحول لصف واحد تلقائي */
+function dedsOf(p) {
+  if (!p) return [];
+  if (Array.isArray(p.deds)) return p.deds;
+  if (cslNum(p.deduction) > 0) return [{ id: 'd1', label: p.deductReason || 'خصم', amount: cslNum(p.deduction), unit: p.dedUnit || 'fixed' }];
+  return [];
+}
+function dedsTotal(p) { return dedsOf(p).reduce((a, d) => a + cslNum(d.amount), 0); }
 
 /* ---------- بطاقة تسجيل القبض ---------- */
 function stfPayCard(e) {
   const p = payOf(e.id, STF.month);
   const salary = p ? toCur(p.salary) : toCur(e.salary);
-  const deduction = p ? toCur(p.deduction) : 0;
   const bonus = p ? toCur(p.bonus) : 0;
-  const reason = p ? (p.deductReason || '') : '';
   const payDate = p && p.payDate ? p.payDate : today();
-  const du = (p && p.dedUnit) || 'fixed';
-  let dedShow = deduction || '';
-  if (du === 'hour') { const r = hourRate(e, STF.month, salary); dedShow = deduction && r ? Math.round(deduction / r * 100) / 100 : ''; }
-  else if (du === 'day') { const w = dayWage(salary, STF.month); dedShow = deduction && w ? Math.round(deduction / w * 100) / 100 : ''; }
-  const net = cslNum(salary) - cslNum(deduction) + cslNum(bonus);
+  const net = cslNum(salary) - toCur(dedsTotal(p)) + cslNum(bonus);
+  /* تهيئة صفوف الخصومات من المحفوظ (أو الفاضي) — بالعملة المعروضة */
+  STF_PDEDS[e.id] = dedsOf(p).map(d => {
+    let v = toCur(cslNum(d.amount));
+    if (d.unit === 'hour') { const r = hourRate(e, STF.month, salary); v = r ? Math.round(v / r * 100) / 100 : v; }
+    else if (d.unit === 'day') { const w = dayWage(salary, STF.month); v = w ? Math.round(v / w * 100) / 100 : v; }
+    return { id: d.id || uid('dd'), label: d.label || '', val: v || '', unit: d.unit || 'fixed', auto: false };
+  });
   return `
   <div class="card stf-paycard" id="pc-${e.id}">
-    <h3>👤 ${esc(e.name)} ${p ? '<span class="pill p-paid">تم القبض ✓</span>' : ''}</h3>
+    <h3>👤 ${esc(e.name)} ${payStatusPill(p)}</h3>
     <div class="stf-grid">
       <div><label class="stf-lbl">الراتب (${curSym()})</label><input class="inp2" inputmode="decimal" id="s-${e.id}" value="${salary}" oninput="stfSalChanged('${e.id}')"></div>
-      ${shiftOf(e) ? `
+      ${hasShifts(e) ? `
       <div><label class="stf-lbl">⏱ ساعات الحضور الفعلية</label><input class="inp2" inputmode="decimal" id="h-${e.id}" value="${p && p.hoursAtt != null ? p.hoursAtt : expectedHours(e, STF.month)}" oninput="stfHoursChanged('${e.id}')">
         <div class="stf-hint" id="aw-${e.id}">${shiftInfoLine(e, salary)}</div></div>` : `
       <div><label class="stf-lbl">أيام الغياب — الجُمُع مش محسوبة ✅</label><input class="inp2" inputmode="numeric" id="a-${e.id}" value="${p && p.absDays ? p.absDays : ''}" placeholder="0" oninput="stfAbsChanged('${e.id}')">
         <div class="stf-hint" id="aw-${e.id}">${wageHint(salary)}</div></div>`}
-      <div><label class="stf-lbl">الخصم — ثابت ولا بالساعة ولا باليوم؟</label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input class="inp2" inputmode="decimal" id="d-${e.id}" value="${dedShow}" placeholder="0" oninput="stfDedChanged('${e.id}');stfCalcNet('${e.id}')" style="flex:1">
-          <select class="inp2" id="du-${e.id}" onchange="stfDedUnitChanged('${e.id}')" style="width:110px;padding:10px 8px">
-            <option value="fixed" ${du === 'fixed' ? 'selected' : ''}>مبلغ ثابت</option>
-            <option value="hour" ${du === 'hour' ? 'selected' : ''}>بالساعة</option>
-            <option value="day" ${du === 'day' ? 'selected' : ''}>باليوم</option>
-          </select>
-        </div>
-        <div class="stf-hint" id="dh-${e.id}"></div></div>
-      <div id="fr-${e.id}"><label class="stf-lbl">${numDedTxt(e.id)}</label><input class="inp2" id="r-${e.id}" value="${esc(reason)}" placeholder="مثال: غياب يومين" ${cslNum(deduction) ? '' : 'disabled'}></div>
+      <div style="grid-column:1/-1"><label class="stf-lbl">➖ الخصومات (ممكن أكتر من خصم — بيتجمعوا كلهم)</label>
+        <div id="deds-${e.id}">${stfDedsRowsHtml(e.id)}</div>
+        <button class="btn btn-o btn-s" style="margin-top:6px" onclick="stfDedAdd('${e.id}')">➕ إضافة خصم</button>
+        <div class="stf-hint" id="dedstot-${e.id}"></div></div>
       <div><label class="stf-lbl">مكافأة (${curSym()})</label><input class="inp2" inputmode="decimal" id="b-${e.id}" value="${bonus || ''}" placeholder="0" oninput="stfBonusChanged('${e.id}')">
         <div class="stf-hint" style="color:var(--gold)" id="bh-${e.id}"></div></div>
       <div><label class="stf-lbl">تاريخ القبض</label><input type="date" class="inp2" id="dt-${e.id}" value="${payDate}"></div>
     </div>
-    ${shiftOf(e) ? stfCalcBox(e, p) : ''}
+    ${hasShifts(e) ? stfCalcBox(e, p) : ''}
     <div class="stf-deserve" id="des-${e.id}"></div>
-    <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
       <div class="stf-netpill" style="flex:1" id="np-${e.id}">${fmt(net)} ${curSym()}<small>الصافي (يتحسب تلقائي)</small></div>
-      <button class="btn btn-p" onclick="stfSavePay('${e.id}')">💾 حفظ</button>
+      <button class="btn btn-o" onclick="stfSavePay('${e.id}','pending')">💾 حفظ لحين القبض</button>
+      <button class="btn btn-p" onclick="stfSavePay('${e.id}','paid')">💰 تم القبض</button>
     </div>
   </div>`;
 }
-function numDedTxt(empId) { return cslNum($('#d-' + empId)?.value) > 0 ? 'سبب الخصم' : 'سبب الخصم 🔒 (اتفتح لما تكتب خصم)'; }
-/* تحويل قيمة الخصم لعملة العرض حسب الوحدة: ثابت / بالساعة / باليوم */
+/* ---------- الخصومات المتعددة ---------- */
+let STF_PDEDS = {};
+function stfDedRows(empId) { if (!STF_PDEDS[empId]) STF_PDEDS[empId] = []; return STF_PDEDS[empId]; }
+function stfDedsRowsHtml(empId) {
+  return stfDedRows(empId).map((r, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+      <input class="inp2" id="dl-${empId}-${i}" placeholder="سبب الخصم — مثال: غياب، تأخير، سلفة" value="${esc(r.label)}" style="flex:2;min-width:130px" oninput="stfDedRowChanged('${empId}',${i},'label',this.value)">
+      <input class="inp2" inputmode="decimal" id="dv-${empId}-${i}" placeholder="القيمة" value="${r.val}" style="flex:1;min-width:80px" oninput="stfDedRowChanged('${empId}',${i},'val',this.value)">
+      <select class="inp2" id="du-${empId}-${i}" onchange="stfDedRowChanged('${empId}',${i},'unit',this.value)" style="width:104px;padding:10px 8px">
+        <option value="fixed" ${r.unit === 'fixed' ? 'selected' : ''}>مبلغ ثابت</option>
+        <option value="hour" ${r.unit === 'hour' ? 'selected' : ''}>بالساعة</option>
+        <option value="day" ${r.unit === 'day' ? 'selected' : ''}>باليوم</option>
+      </select>
+      <button class="btn btn-r btn-s" style="padding:6px 9px" onclick="stfDedDel('${empId}',${i})">✕</button>
+    </div>`).join('') || '<div class="stf-hint">مفيش خصومات — دوس «➕ إضافة خصم» أو اكتب أيام الغياب/الساعات وهيتحسبوا تلقائي</div>';
+}
+function stfDedRowChanged(empId, i, f, v) { const rows = stfDedRows(empId); if (!rows[i]) return; rows[i][f] = v; stfDedsTot(empId); stfCalcNet(empId); }
+function stfDedAdd(empId) { stfDedRows(empId).push({ id: uid('dd'), label: '', val: '', unit: 'fixed', auto: false }); $('#deds-' + empId).innerHTML = stfDedsRowsHtml(empId); stfDedsTot(empId); }
+function stfDedDel(empId, i) { stfDedRows(empId).splice(i, 1); $('#deds-' + empId).innerHTML = stfDedsRowsHtml(empId); stfDedsTot(empId); stfCalcNet(empId); }
+/* صف خصم تلقائي من الغياب/الساعات */
+function stfSetAutoDed(empId, label, poundsDisp) {
+  const rows = stfDedRows(empId);
+  let row = rows.find(r => r.auto);
+  if (poundsDisp <= 0) {
+    if (row) { rows.splice(rows.indexOf(row), 1); $('#deds-' + empId).innerHTML = stfDedsRowsHtml(empId); }
+    stfDedsTot(empId); stfCalcNet(empId); return;
+  }
+  if (!row) { row = { id: uid('dd'), label, val: poundsDisp, unit: 'fixed', auto: true }; rows.unshift(row); $('#deds-' + empId).innerHTML = stfDedsRowsHtml(empId); }
+  else { row.label = label; row.val = poundsDisp; const i = rows.indexOf(row); const vEl = $('#dv-' + empId + '-' + i); if (vEl) vEl.value = poundsDisp; const lEl = $('#dl-' + empId + '-' + i); if (lEl) lEl.value = label; }
+  stfDedsTot(empId); stfCalcNet(empId);
+}
+/* مجموع الخصومات بعملة العرض */
 function stfDedPounds(empId) {
   const e = PR().emps.find(x => x.id === empId);
-  const uEl = $('#du-' + empId);
-  const u = uEl ? uEl.value : 'fixed';
-  const v = cslNum($('#d-' + empId).value);
-  if (u === 'hour' && e) return Math.round(v * hourRate(e, STF.month, $('#s-' + empId).value) * 100) / 100;
-  if (u === 'day') return Math.round(v * dayWage($('#s-' + empId).value, STF.month) * 100) / 100;
-  return v;
+  let t = 0;
+  stfDedRows(empId).forEach(r => {
+    const v = cslNum(r.val);
+    if (!v) return;
+    if (r.unit === 'hour' && e) t += v * hourRate(e, STF.month, $('#s-' + empId).value);
+    else if (r.unit === 'day') t += v * dayWage($('#s-' + empId).value, STF.month);
+    else t += v;
+  });
+  return Math.round(t * 100) / 100;
 }
-function stfDedChanged(empId) {
-  const has = stfDedPounds(empId) > 0;
-  const r = $('#r-' + empId);
-  r.disabled = !has;
-  if (!has) r.value = '';
-  $('#fr-' + empId + ' .stf-lbl').textContent = has ? 'سبب الخصم' : 'سبب الخصم 🔒 (اتفتح لما تكتب خصم)';
-  stfDedHint(empId);
+function stfDedsTot(empId) {
+  const el = $('#dedstot-' + empId); if (!el) return;
+  const rows = stfDedRows(empId).filter(r => cslNum(r.val) > 0);
+  if (!rows.length) { el.textContent = ''; return; }
+  el.innerHTML = 'إجمالي الخصومات: <b style="color:#ef4444">' + fmt(stfDedPounds(empId)) + ' ' + curSym() + '</b> (' + rows.length + ' خصم)';
 }
-function stfDedHint(empId) {
-  const el = $('#dh-' + empId); if (!el) return;
-  const e = PR().emps.find(x => x.id === empId);
-  const uEl = $('#du-' + empId);
-  const u = uEl ? uEl.value : 'fixed';
-  const v = cslNum($('#d-' + empId).value);
-  if (!v) { el.textContent = 'اكتب مبلغ أو عدد — والنظام بيحوّله لـ' + curSym() + ' حسب اختيارك'; return; }
-  if (u === 'hour' && e) {
-    const r = hourRate(e, STF.month, $('#s-' + empId).value);
-    el.textContent = v + ' ساعة × ' + fmt(r) + ' ' + curSym() + ' = ' + fmt(Math.round(v * r * 100) / 100) + ' ' + curSym();
-  } else if (u === 'day') {
-    const w = dayWage($('#s-' + empId).value, STF.month);
-    el.textContent = v + ' يوم × ' + fmt(w) + ' ' + curSym() + ' = ' + fmt(Math.round(v * w * 100) / 100) + ' ' + curSym();
-  } else {
-    el.textContent = 'مبلغ ثابت: ' + fmt(v) + ' ' + curSym();
-  }
-}
-function stfDedUnitChanged(empId) { stfDedChanged(empId); stfCalcNet(empId); }
 /* المستحق: اللي المفروض ياخده حسب الحضور — من غير خصومات يدوية ولا مكافآت */
 function stfDeserveCalc(empId) {
   const e = PR().emps.find(x => x.id === empId); if (!e) return 0;
@@ -172,16 +216,21 @@ function stfDeserveCalc(empId) {
   const hEl = $('#h-' + empId);
   if (hEl) {
     if (hEl.value.trim() === '') return s;
-    const att = cslNum(hEl.value);
+    const att = Math.min(cslNum(hEl.value), expectedHours(e, STF.month));
     return Math.round(att * hourRate(e, STF.month, s) * 100) / 100;
   }
   const aEl = $('#a-' + empId);
   if (aEl && cslNum(aEl.value) > 0) return Math.round((s - cslNum(aEl.value) * dayWage(s, STF.month)) * 100) / 100;
   return s;
 }
+/* المستحق النهائي: حسب الحضور − الخصومات + المكافآت — بيتحدّث مع كل تعديل */
+function stfDeserveFinal(empId) {
+  const b = $('#b-' + empId) ? cslNum($('#b-' + empId).value) : 0;
+  return Math.round((stfDeserveCalc(empId) - stfDedPounds(empId) + b) * 100) / 100;
+}
 function stfDeserveUI(empId) {
   const el = $('#des-' + empId); if (!el) return;
-  el.innerHTML = '<span>🎯 المستحق: <b>' + fmt(stfDeserveCalc(empId)) + ' ' + curSym() + '</b></span><small>حسب الحضور — لو مكتبتش حاجة المستحق المرتب كامل</small>';
+  el.innerHTML = '<span>🎯 المستحق: <b>' + fmt(stfDeserveFinal(empId)) + ' ' + curSym() + '</b></span><small>حسب الحضور بعد الخصومات والمكافآت — بيتحدّث مع كل حفظ</small>';
 }
 function stfCalcNet(empId) {
   const s = cslNum($('#s-' + empId).value), d = stfDedPounds(empId), b = cslNum($('#b-' + empId).value);
@@ -197,8 +246,7 @@ function stfCalcRows(empId, p) {
   if (!STF_CALC[k]) {
     if (p && p.hoursAtt != null) {
       const e = PR().emps.find(x => x.id === empId);
-      const sh = e && shiftOf(e);
-      const per = sh ? shiftHours(sh) : 0;
+      const per = e && hasShifts(e) ? expectedHours(e, STF.month) : 0;
       STF_CALC[k] = per ? [{ h: per, d: Math.round(cslNum(p.hoursAtt) / per * 100) / 100 }] : [{ h: '', d: '' }];
     } else STF_CALC[k] = [{ h: '', d: '' }];
   }
@@ -261,42 +309,27 @@ function stfCalcBox(e, p) {
     <button class="btn btn-p btn-s" style="width:100%" onclick="stfCalcAdopt('${e.id}')">✅ سجّل المجموع في خانة الحضور</button>
   </div>`;
 }
-/* لما تكتب أيام الغياب: الخصم بيتحسب لوحده = عدد الأيام × قيمة اليوم */
+/* لما تكتب أيام الغياب: خصم تلقائي = عدد الأيام × قيمة اليوم */
 function stfAbsChanged(empId) {
   let a = Math.floor(cslNum($('#a-' + empId).value));
   const wd = workDays(STF.month);
   if (a < 0) a = 0;
   if (a > wd) { a = wd; $('#a-' + empId).value = a; toast('⚠️ أقصى عدد أيام عمل في الشهر ده ' + wd + ' يوم'); }
-  const dEl = $('#d-' + empId);
-  const duEl = $('#du-' + empId); if (duEl) duEl.value = 'fixed';
-  if (a > 0) {
-    dEl.value = Math.round(a * dayWage($('#s-' + empId).value, STF.month) * 100) / 100;
-    const rEl = $('#r-' + empId);
-    if (!rEl.value.trim()) rEl.value = 'غياب ' + a + ' أيام';
-  } else {
-    $('#a-' + empId).value = '';
-    dEl.value = '';
-  }
-  stfDedChanged(empId); stfCalcNet(empId);
+  const pounds = a > 0 ? Math.round(a * dayWage($('#s-' + empId).value, STF.month) * 100) / 100 : 0;
+  stfSetAutoDed(empId, 'غياب ' + a + ' أيام', pounds);
+  stfCalcNet(empId);
 }
 /* لما تسجل الساعات الفعلية: النقصان = خصم تلقائي، والزيادة عن المفروض = مكافأة تلقائية */
 function stfHoursChanged(empId) {
-  const e = PR().emps.find(x => x.id === empId); if (!e || !shiftOf(e)) return;
+  const e = PR().emps.find(x => x.id === empId); if (!e || !hasShifts(e)) return;
   let att = cslNum($('#h-' + empId).value);
   const exp = expectedHours(e, STF.month);
   if (att < 0) { att = 0; $('#h-' + empId).value = 0; }
   const diff = Math.max(0, Math.round((exp - att) * 100) / 100);
   const ot = Math.max(0, Math.round((att - exp) * 100) / 100);
   const rate = hourRate(e, STF.month, $('#s-' + empId).value);
-  const dEl = $('#d-' + empId);
-  const duEl = $('#du-' + empId); if (duEl) duEl.value = 'fixed';
-  if (diff > 0) {
-    dEl.value = Math.round(diff * rate * 100) / 100;
-    const rEl = $('#r-' + empId);
-    if (!rEl.value.trim()) rEl.value = 'فرق ' + diff + ' ساعات عن المفترض';
-  } else {
-    dEl.value = '';
-  }
+  const pounds = diff > 0 ? Math.round(diff * rate * 100) / 100 : 0;
+  stfSetAutoDed(empId, 'فرق ' + diff + ' ساعات عن المفترض', pounds);
   const bEl = $('#b-' + empId);
   const bh = $('#bh-' + empId);
   if (ot > 0) {
@@ -308,7 +341,7 @@ function stfHoursChanged(empId) {
     bEl.value = ''; delete bEl.dataset.ot;
     if (bh) bh.textContent = '';
   }
-  stfDedChanged(empId); stfCalcNet(empId);
+  stfCalcNet(empId);
 }
 function stfBonusChanged(empId) {
   const bEl = $('#b-' + empId);
@@ -318,41 +351,47 @@ function stfBonusChanged(empId) {
 function stfSalChanged(empId) {
   const e = PR().emps.find(x => x.id === empId);
   const aEl = $('#a-' + empId);
-  if (aEl && cslNum(aEl.value) > 0) {
-    const duEl = $('#du-' + empId); if (duEl) duEl.value = 'fixed';
-    $('#d-' + empId).value = Math.round(cslNum(aEl.value) * dayWage($('#s-' + empId).value, STF.month) * 100) / 100;
-    stfDedChanged(empId);
-  }
+  if (aEl && cslNum(aEl.value) > 0) stfAbsChanged(empId);
   const hEl = $('#h-' + empId);
-  if (hEl && shiftOf(e)) {
+  if (hEl && hasShifts(e)) {
     stfHoursChanged(empId);
-    $('#aw-' + empId).textContent = shiftInfoLine(e, $('#s-' + empId).value);
+    $('#aw-' + empId).innerHTML = shiftInfoLine(e, $('#s-' + empId).value);
   } else {
     $('#aw-' + empId).textContent = wageHint($('#s-' + empId).value);
   }
-  const duEl2 = $('#du-' + empId);
-  if (duEl2 && duEl2.value !== 'fixed') stfDedChanged(empId);
   stfCalcNet(empId);
 }
 
 /* ---------- حفظ القبض (التخزين بيتم بالجنيه المصري دائماً) ---------- */
-function stfSavePay(empId) {
+function stfSavePay(empId, status) {
   const s = cslNum($('#s-' + empId).value), d = stfDedPounds(empId), b = cslNum($('#b-' + empId).value);
-  const reason = $('#r-' + empId).value.trim();
   const dt = $('#dt-' + empId).value;
   if (!s) return toast('⚠️ اكتب الراتب');
   if (d < 0 || b < 0) return toast('⚠️ الخصم والمكافأة مينفعش يكونوا بالسالب');
-  if (d > 0 && !reason) return toast('⚠️ اكتب سبب الخصم');
+  const rows = stfDedRows(empId).filter(r => cslNum(r.val) > 0);
+  const noLabel = rows.find(r => !(r.label || '').trim());
+  if (noLabel) return toast('⚠️ اكتب سبب كل خصم');
   if (d > s) return toast('⚠️ الخصم أكبر من الراتب!');
   const ex = payOf(empId, STF.month);
   const e0 = PR().emps.find(x => x.id === empId);
   const aEl = $('#a-' + empId), hEl = $('#h-' + empId);
-  const duEl = $('#du-' + empId);
   /* التحويل للجنيه عند الحفظ — العرض بأي عملة يفضل متاح */
-  const sEgp = fromCur(s), dEgp = fromCur(d), bEgp = fromCur(b);
-  const rec = { id: ex ? ex.id : uid('pay'), empId, month: STF.month, salary: sEgp, deduction: dEgp, dedUnit: duEl ? duEl.value : 'fixed', deductReason: d ? reason : '', bonus: bEgp, net: Math.round((sEgp - dEgp + bEgp) * 100) / 100, payDate: dt, absDays: aEl ? cslNum(aEl.value) : 0, hoursExp: hEl && e0 ? expectedHours(e0, STF.month) : null, hoursAtt: hEl ? cslNum(hEl.value) : null, updatedAt: Date.now() };
+  const sEgp = fromCur(s), bEgp = fromCur(b);
+  const deds = rows.map(r => {
+    const v = cslNum(r.val);
+    let amt = v;
+    if (r.unit === 'hour' && e0) amt = Math.round(v * hourRate(e0, STF.month, s) * 100) / 100;
+    else if (r.unit === 'day') amt = Math.round(v * dayWage(s, STF.month) * 100) / 100;
+    return { id: r.id, label: (r.label || '').trim(), amount: fromCur(amt), unit: r.unit || 'fixed' };
+  });
+  const dEgp = Math.round(deds.reduce((a, x) => a + cslNum(x.amount), 0) * 100) / 100;
+  const rec = { id: ex ? ex.id : uid('pay'), empId, month: STF.month, salary: sEgp, deds,
+    deduction: dEgp, dedUnit: 'fixed', deductReason: deds.map(x => x.label).join(' + '),
+    bonus: bEgp, net: Math.round((sEgp - dEgp + bEgp) * 100) / 100, status: status || 'paid', payDate: dt,
+    absDays: aEl ? cslNum(aEl.value) : 0, hoursExp: hEl && e0 ? expectedHours(e0, STF.month) : null, hoursAtt: hEl ? cslNum(hEl.value) : null, updatedAt: Date.now() };
   if (ex) Object.assign(ex, rec); else PR().pays.push(rec);
-  save(); renderStaff(); toast('✅ تم حفظ القبض');
+  save(); renderStaff();
+  toast(status === 'pending' ? '💾 اتحفظ لحين القبض — الصافي: ' + fmt(Math.round((s - d + b) * 100) / 100) + ' ' + curSym() : '💰 تم تسجيل القبض');
 }
 
 /* ---------- شاشة الموظفون ---------- */
@@ -377,7 +416,7 @@ function stfEmpList() {
   const emps = PR().emps;
   const m = STF.month;
   const totalSal = emps.filter(e => e.active !== false).reduce((a, e) => a + toCur(e.salary), 0);
-  const paidCount = emps.filter(e => payOf(e.id, m)).length;
+  const paidCount = emps.filter(e => payStatus(payOf(e.id, m)) === 'paid').length;
   return `
   <div class="stats">
     <div class="stat blue"><div class="v">${emps.length}</div><div class="l">موظف</div></div>
@@ -394,8 +433,8 @@ function stfEmpList() {
     ${emps.map(e => { const p = payOf(e.id, m); return `<tr>
       <td style="font-weight:700">${esc(e.name)}${e.active === false ? ' <span class="pill p-unpaid">موقوف</span>' : ''}${e.phone ? `<div class="mut" style="font-size:11px;font-weight:400">${esc(e.phone)}</div>` : ''}</td>
       <td class="num">${fmt(toCur(e.salary))}</td>
-      <td style="font-size:11.5px">${shiftOf(e) ? esc(shiftLabel(e)) : '<span class="mut">بدون شيفت</span>'}</td>
-      <td>${p ? '<span class="pill p-paid">قبض ✓</span>' : '<span class="pill p-unpaid">لسه</span>'}</td>
+      <td style="font-size:11.5px">${hasShifts(e) ? esc(shiftLabel(e)) : '<span class="mut">بدون شيفت</span>'}</td>
+      <td>${p ? payStatusPill(p) : '<span class="pill p-unpaid">لسه</span>'}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-t btn-s" onclick="stfEmpModal('${e.id}')">تعديل</button>
         <button class="btn btn-p btn-s" onclick="STF.empId='${e.id}';renderStaff()">القبض</button>
@@ -424,22 +463,22 @@ function stfPayView() {
     ${emps.length ? emps.map(x => { const p = payOf(x.id, m); return `
       <div class="tile" style="margin-bottom:8px" onclick="STF.empId='${x.id}';renderStaff()">
         <span style="font-size:22px">👤</span>
-        <div style="flex:1"><b>${esc(x.name)}</b><div style="font-size:12px;color:var(--mut)">${shiftOf(x) ? esc(shiftLabel(x)) : 'بدون شيفت'} · الراتب ${fmt(toCur(x.salary))} ${curSym()}</div></div>
-        ${p ? '<span class="pill p-paid">قبض ✓</span>' : '<span class="pill p-unpaid">لسه</span>'}
+        <div style="flex:1"><b>${esc(x.name)}</b><div style="font-size:12px;color:var(--mut)">${hasShifts(x) ? esc(shiftLabel(x)) : 'بدون شيفت'} · الراتب ${fmt(toCur(x.salary))} ${curSym()}</div></div>
+        ${p ? payStatusPill(p) : '<span class="pill p-unpaid">لسه</span>'}
       </div>`; }).join('') : '<div class="empty">مفيش موظفين — سجل موظف الأول من تبويب الموظفون</div>'}</div>`;
   }
   return head + stfPayCard(e);
 }
 function stfBindPay() {
   PR().emps.filter(e => e.active !== false).forEach(e => {
-    if ($('#pc-' + e.id)) { stfDedHint(e.id); stfDeserveUI(e.id); }
+    if ($('#pc-' + e.id)) { stfDedsTot(e.id); stfDeserveUI(e.id); }
   });
 }
 
 /* ---------- إضافة/تعديل موظف ---------- */
 function stfEmpModal(id) {
   const e = id ? PR().emps.find(x => x.id === id) : null;
-  const sh = e && e.shift ? e.shift : { type: 'morning', from: '09:00', to: '16:00', hours: '', days: ['sat', 'sun', 'mon', 'tue', 'wed', 'thu'] };
+  stfShTmpInit(e);
   modal(`<h3>${e ? '✏️ تعديل موظف' : '➕ موظف جديد'}</h3>
   <div class="stf-grid">
     <div><label class="stf-lbl">الاسم</label><input class="inp2" id="em-name" value="${e ? esc(e.name) : ''}" placeholder="اسم الموظف"></div>
@@ -447,61 +486,109 @@ function stfEmpModal(id) {
     <div><label class="stf-lbl">الموبايل (اختياري)</label><input class="inp2" inputmode="tel" id="em-phone" value="${e ? esc(e.phone || '') : ''}" placeholder="01xxxxxxxxx"></div>
     <div><label class="stf-lbl">تاريخ التعيين</label><input type="date" class="inp2" id="em-hire" value="${e && e.hireDate ? e.hireDate : today()}"></div>
   </div>
-  <fieldset class="stf-fieldset"><legend>🕐 الشيفت (اختياري — لو سيبته فاضي الحساب بالأيام)</legend>
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-      <select class="inp2" id="em-shtype" onchange="stfShTypeChange()" style="flex:1;min-width:120px">
-        ${Object.keys(SHIFT_TYPES).map(t => `<option value="${t}" ${sh.type === t ? 'selected' : ''}>${SHIFT_TYPES[t]}</option>`).join('')}
-      </select>
-      <input type="time" class="inp2" id="em-shfrom" value="${sh.from || ''}" onchange="stfShTimeChange()">
-      <span style="color:var(--mut)">إلى</span>
-      <input type="time" class="inp2" id="em-shto" value="${sh.to || ''}" onchange="stfShTimeChange()">
-      <input class="inp2" inputmode="decimal" id="em-shhours" value="${sh.hours || ''}" placeholder="ساعات/يوم" style="width:100px" oninput="$('#em-shhint').textContent=stfShiftHint()">
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-      ${DOWS.map(d => `<label style="display:flex;align-items:center;gap:4px;font-size:13px;font-weight:700;cursor:pointer"><input type="checkbox" class="em-shday" value="${d[0]}" ${(sh.days || []).includes(d[0]) ? 'checked' : ''}> ${d[1]}</label>`).join('')}
-    </div>
-    <div class="stf-hint" id="em-shhint">${stfShiftHint(sh)}</div>
+  <fieldset class="stf-fieldset"><legend>🕐 الشيفتات (اختياري — ممكن أكتر من شيفت، وسيبها فاضية للحساب بالأيام)</legend>
+    <div id="em-shifts">${stfShBlocksHtml()}</div>
+    <button class="btn btn-o btn-s" style="margin-top:6px" onclick="stfShAdd()">➕ إضافة شيفت</button>
+    <div class="stf-hint" id="em-shhint" style="margin-top:6px">${stfShTmpHint()}</div>
   </fieldset>
   <div style="display:flex;gap:10px;margin-top:14px">
     <button class="btn btn-p" style="flex:1" onclick="stfSaveEmp('${id || ''}')">💾 حفظ</button>
     <button class="btn btn-o" onclick="closeModal()">إلغاء</button>
   </div>`);
-  setTimeout(() => { const h = $('#em-shhours'); if (h && !h.value) h.value = ''; }, 0);
 }
-function stfShTypeChange() {
-  const t = $('#em-shtype').value;
+/* ---------- شيفتات متعددة: الحالة المؤقتة stfTmpShifts ---------- */
+function stfShTmpInit(e) {
+  window.stfTmpShifts = shiftsOf(e).map(sh => ({ type: sh.type || 'custom', from: sh.from || '', to: sh.to || '', hours: sh.hours || '', days: [...(sh.days || [])] }));
+}
+function stfShBlocksHtml() {
+  const list = (typeof stfTmpShifts !== 'undefined' && stfTmpShifts) ? stfTmpShifts : [];
+  return list.map((sh, i) => `
+    <div style="border:1.5px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:10px;background:var(--bg)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <b style="font-size:.82rem">⏱ شيفت ${i + 1}</b>
+        <button class="btn btn-r btn-s" onclick="stfShDel(${i})">🗑️ حذف</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <select class="inp2" id="em-shtype-${i}" onchange="stfShTypeChange(${i})" style="flex:1;min-width:120px">
+          ${Object.keys(SHIFT_TYPES).map(t => `<option value="${t}" ${sh.type === t ? 'selected' : ''}>${SHIFT_TYPES[t]}</option>`).join('')}
+        </select>
+        <input type="time" class="inp2" id="em-shfrom-${i}" value="${sh.from}" onchange="stfShTimeChange(${i})">
+        <span style="color:var(--mut)">إلى</span>
+        <input type="time" class="inp2" id="em-shto-${i}" value="${sh.to}" onchange="stfShTimeChange(${i})">
+        <input class="inp2" inputmode="decimal" id="em-shhours-${i}" value="${sh.hours}" placeholder="ساعات/يوم" style="width:100px" oninput="stfShTimeChange(${i})">
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        ${DOWS.map(d => `<label style="display:flex;align-items:center;gap:4px;font-size:13px;font-weight:700;cursor:pointer"><input type="checkbox" class="em-shday" data-i="${i}" value="${d[0]}" ${sh.days.includes(d[0]) ? 'checked' : ''} onchange="stfShDayChanged(${i})"> ${d[1]}</label>`).join('')}
+      </div>
+    </div>`).join('') || '<div class="stf-hint" style="margin-bottom:8px">مفيش شيفتات — دوس «➕ إضافة شيفت» لو المرتب بيتحسب بالساعات</div>';
+}
+function stfShCollect() {
+  const list = (typeof stfTmpShifts !== 'undefined' && stfTmpShifts) ? stfTmpShifts : [];
+  return list.map((sh, i) => ({
+    type: ($('#em-shtype-' + i) ? $('#em-shtype-' + i).value : sh.type) || 'custom',
+    from: $('#em-shfrom-' + i) ? $('#em-shfrom-' + i).value : sh.from,
+    to: $('#em-shto-' + i) ? $('#em-shto-' + i).value : sh.to,
+    hours: cslNum($('#em-shhours-' + i) ? $('#em-shhours-' + i).value : sh.hours) || '',
+    days: $$('.em-shday[data-i="' + i + '"]').filter(c => c.checked).map(c => c.value)
+  }));
+}
+function stfShSync() { window.stfTmpShifts = stfShCollect(); }
+function stfShTmpHint() {
+  const shifts = stfShCollect().filter(sh => sh.days.length && (cslNum(sh.hours) || hoursBetween(sh.from, sh.to)) > 0);
+  if (!shifts.length) return 'من غير جدول، الحساب بالأيام زي الأول';
+  const m = STF.month || curMonth();
+  let t = 0;
+  shifts.forEach(sh => { t += shiftDayCount(m, sh.days) * (cslNum(sh.hours) || hoursBetween(sh.from, sh.to)); });
+  return shifts.length + ' شيفتات · المفترض ' + Math.round(t * 100) / 100 + ' ساعة في ' + monthLabel(m);
+}
+function stfShTypeChange(i) {
+  stfShSync();
+  const t = $('#em-shtype-' + i).value;
   const pr = SHIFT_PRESETS[t] || { from: '', to: '' };
-  if (pr.from) { $('#em-shfrom').value = pr.from; $('#em-shto').value = pr.to; }
-  $('#em-shhint').textContent = stfShiftHint();
+  if (pr.from) {
+    $('#em-shfrom-' + i).value = pr.from; $('#em-shto-' + i).value = pr.to;
+    stfTmpShifts[i].from = pr.from; stfTmpShifts[i].to = pr.to;
+    const h = hoursBetween(pr.from, pr.to);
+    if (h > 0) { $('#em-shhours-' + i).value = h; stfTmpShifts[i].hours = h; }
+  }
+  $('#em-shhint').textContent = stfShTmpHint();
 }
-function stfShTimeChange() {
-  $('#em-shtype').value = 'custom';
-  $('#em-shhint').textContent = stfShiftHint();
+function stfShTimeChange(i) {
+  stfShSync();
+  const h = hoursBetween($('#em-shfrom-' + i).value, $('#em-shto-' + i).value);
+  if (h > 0) { $('#em-shhours-' + i).value = h; stfTmpShifts[i].hours = h; }
+  $('#em-shhint').textContent = stfShTmpHint();
 }
-function stfShiftHint(sh) {
-  const g = id => $(id) ? $(id).value : null;
-  const o = sh || { type: g('#em-shtype'), from: g('#em-shfrom'), to: g('#em-shto'), hours: g('#em-shhours') };
-  const days = $$('.em-shday').filter(c => c.checked).map(c => c.value);
-  if (!days.length) return '⚠️ اختار أيام الشيفت على الأقل';
-  const hrs = cslNum(o.hours) || hoursBetween(o.from, o.to);
-  const dc = shiftDayCount(STF.month || curMonth(), days);
-  return 'ساعات الشيفت: ' + hrs + ' ساعة/يوم · الأيام المختارة: ' + days.length + ' أيام/أسبوع · المفترض في ' + monthLabel(STF.month || curMonth()) + ': ' + Math.round(dc * hrs * 100) / 100 + ' ساعة';
-}
+function stfShDayChanged(i) { stfShSync(); $('#em-shhint').textContent = stfShTmpHint(); }
+function stfShAdd() { stfShSync(); stfTmpShifts.push({ type: 'custom', from: '', to: '', hours: '', days: [] }); $('#em-shifts').innerHTML = stfShBlocksHtml(); $('#em-shhint').textContent = stfShTmpHint(); }
+function stfShDel(i) { stfShSync(); stfTmpShifts.splice(i, 1); $('#em-shifts').innerHTML = stfShBlocksHtml(); $('#em-shhint').textContent = stfShTmpHint(); }
+function stfShiftHint(sh) { return stfShTmpHint(); }
 function stfSaveEmp(id) {
   const name = $('#em-name').value.trim();
   const sal = cslNum($('#em-sal').value);
   if (!name) return toast('⚠️ اكتب اسم الموظف');
   if (!sal) return toast('⚠️ اكتب الراتب');
-  const days = $$('.em-shday').filter(c => c.checked).map(c => c.value);
-  const shift = days.length ? { type: $('#em-shtype').value, from: $('#em-shfrom').value, to: $('#em-shto').value, hours: cslNum($('#em-shhours').value) || undefined, days } : undefined;
+  stfShSync();
+  const allSh = stfTmpShifts.map((sh, i) => ({
+    type: ($('#em-shtype-' + i) ? $('#em-shtype-' + i).value : sh.type) || 'custom',
+    from: $('#em-shfrom-' + i) ? $('#em-shfrom-' + i).value : sh.from,
+    to: $('#em-shto-' + i) ? $('#em-shto-' + i).value : sh.to,
+    hours: cslNum($('#em-shhours-' + i) ? $('#em-shhours-' + i).value : sh.hours) || undefined,
+    days: $$('.em-shday[data-i="' + i + '"]').filter(c => c.checked).map(c => c.value)
+  }));
+  const badSh = allSh.find(sh => sh.days.length && !(cslNum(sh.hours) || hoursBetween(sh.from, sh.to)));
+  if (badSh) return toast('⚠️ في شيفت أيامه متعلمة بس معاده فاضي — اكتب المعاد من/إلى أو عدد الساعات');
+  const shifts = allSh.filter(sh => sh.days.length && (cslNum(sh.hours) || hoursBetween(sh.from, sh.to)) > 0);
+  const shift = shifts.length ? { ...shifts[0] } : undefined; /* توافق: shift القديم = أول شيفت */
   const salEgp = fromCur(sal);
   if (id) {
     const e = PR().emps.find(x => x.id === id); if (!e) return;
     e.name = name; e.salary = salEgp; e.phone = $('#em-phone').value.trim(); e.hireDate = $('#em-hire').value;
+    e.shifts = shifts;
     if (shift) e.shift = shift; else delete e.shift;
     e.updatedAt = Date.now();
   } else {
-    PR().emps.push({ id: uid('emp'), name, salary: salEgp, phone: $('#em-phone').value.trim(), hireDate: $('#em-hire').value, shift, active: true, createdAt: Date.now(), updatedAt: Date.now() });
+    PR().emps.push({ id: uid('emp'), name, salary: salEgp, phone: $('#em-phone').value.trim(), hireDate: $('#em-hire').value, shifts, shift, active: true, createdAt: Date.now(), updatedAt: Date.now() });
   }
   save(); closeModal(); renderStaff(); toast('✅ تم حفظ الموظف');
 }
