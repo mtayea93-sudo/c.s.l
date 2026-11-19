@@ -1,0 +1,41 @@
+name: csl-meta-repair
+on:
+  workflow_dispatch:
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Re-register orphan labs into csl/meta (no codes printed)
+        run: |
+          node <<'EOF'
+          const https=require('https');
+          const KEY="AIzaSyAPawpCwihRHOaPjMzhhcsSDa9WAy0Qx-Q";
+          const DBu="sakrlab2026-default-rtdb.firebaseio.com";
+          const post=(p,b)=>new Promise((res,rej)=>{const r=https.request({hostname:"identitytoolkit.googleapis.com",path:p,method:"POST",headers:{"Content-Type":"application/json","Content-Length":Buffer.byteLength(b)}},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(JSON.parse(d)))});r.on("error",rej);r.write(b);r.end()});
+          const req=(m,p)=>new Promise((res,rej)=>{const r=https.request({hostname:DBu,path:p+"?auth="+IDTOKEN,method:m,headers:{"Content-Type":"application/json"}},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(d?JSON.parse(d):null))});r.on("error",rej);r.end()});
+          const mk=()=>Math.random().toString(36).slice(2,6).toLowerCase()+"-"+Math.random().toString(36).slice(2,6).toLowerCase();
+          let IDTOKEN=null;
+          (async()=>{
+            const a=await post("/v1/accounts:signUp?key="+KEY,JSON.stringify({returnSecureToken:true}));
+            if(a.error){console.log("AUTH ERR");process.exit(0)}
+            IDTOKEN=a.idToken;
+            const snap=await req("GET","/csl.json");
+            const meta=(snap&&snap.meta)||{v:{labs:[]}};
+            const m=meta.v||{labs:[]};
+            if(!Array.isArray(m.labs)) m.labs=[];
+            const known=new Set(m.labs.map(l=>l.id));
+            const labsNode=(snap&&snap.labs)||{};
+            let added=0;
+            for(const id of Object.keys(labsNode)){
+              const n=labsNode[id];
+              if(known.has(id)||!n||!n.v) continue;
+              const name=(n.v.lab&&n.v.lab.name)||("معمل "+id);
+              m.labs.push({id,name,code:mk(),active:true,casa:false,createdAt:new Date().toISOString().slice(0,10),restoredAt:new Date().toISOString().slice(0,10)});
+              added++;
+            }
+            if(!added){console.log("NOTHING TO REPAIR — meta.labs count:",m.labs.length);process.exit(0)}
+            const putB=(p,b)=>new Promise((res,rej)=>{const r=https.request({hostname:DBu,path:p+"?auth="+IDTOKEN,method:"PUT",headers:{"Content-Type":"application/json","Content-Length":Buffer.byteLength(b)}},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(d?JSON.parse(d):null))});r.on("error",rej);r.write(b);r.end()});
+            await putB("/csl/meta.json",JSON.stringify({v:m,at:new Date().toISOString()}));
+            console.log("REPAIRED — added labs:",added,"total meta.labs:",m.labs.length);
+          })().catch(e=>console.log("ERR",e.message));
+          EOF
