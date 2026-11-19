@@ -223,11 +223,17 @@ function doSuperLogin() {
   if (user === META.superUser.user && pass === META.superUser.pass) {
     setSession({ type: 'super', name: 'الموزّع' }); go(''); route();
     /* نجيب معاملات الموزّع من السحابة تلقائياً أول ما يدخل */
+    const afterPull = (changed) => {
+      if (changed) { try { renderDistributor(); } catch (e) {} }
+      /* نرفع نسخة الموزّع المحلية بعد السحب — الجهاز الرئيسي بيرجّع القايمة للسحابة لو اتمسحت (إصلاح 2026-11-19) */
+      if (META.labs && META.labs.length > 0 && typeof cloudScheduleMetaPush === 'function') setTimeout(cloudScheduleMetaPush, 2500);
+      setTimeout(distScanOrphans, 3500);
+    };
     if (window.CLOUD && CLOUD.ready) {
-      cloudPullMetaAwait().then(changed => { if (changed) { try { renderDistributor(); } catch (e) {} } }).catch(() => {});
+      cloudPullMetaAwait().then(afterPull).catch(() => {});
     } else if (window.CLOUD && !CLOUD.gaveUp) {
       const tryPull = setInterval(() => {
-        if (CLOUD.ready) { clearInterval(tryPull); cloudPullMetaAwait().then(c => { if (c) { try { renderDistributor(); } catch (e) {} } }).catch(() => {}); }
+        if (CLOUD.ready) { clearInterval(tryPull); cloudPullMetaAwait().then(afterPull).catch(() => {}); }
         if (CLOUD.gaveUp) clearInterval(tryPull);
       }, 3000);
     }
@@ -261,7 +267,20 @@ async function doLabLogin() {
     }
   }
   if (!lab.active) return toast('⚠️ المعمل موقوف — تواصل مع الموزّع');
-  const dbRaw = (DB && LABID === lab.id) ? DB : JSON.parse(localStorage.getItem(labKey(lab.id)) || 'null');
+  let dbRaw = (DB && LABID === lab.id) ? DB : JSON.parse(localStorage.getItem(labKey(lab.id)) || 'null');
+  /* الجهاز مش معاه نسخة المعمل → نسحبها من السحابة (إصلاح 2026-11-19) */
+  if (!dbRaw && window.CLOUD && CLOUD.ready && CLOUD.fb) {
+    toast('⏳ بجيب بيانات المعمل من السحابة…');
+    try {
+      const lsnap = await CLOUD.fb.ref('csl/labs/' + lab.id).once('value');
+      const ldoc = lsnap.val();
+      if (ldoc && ldoc.v) {
+        dbRaw = ldoc.v;
+        localStorage.setItem(labKey(lab.id), JSON.stringify(dbRaw));
+        localStorage.setItem('csl_sync_' + lab.id, ldoc.at || new Date().toISOString());
+      }
+    } catch (e) { /* لو فشلت القراءة dbRaw يفضل null */ }
+  }
   const usr = (dbRaw?.users || []).find(x => x.user === u);
   const v = await verifyPass(usr, p);
   if (!v.ok) return toast('⚠️ اسم المستخدم أو كلمة المرور غير صحيحة');
@@ -319,9 +338,49 @@ function renderDistributor() {
           <button class="btn btn-r btn-s" onclick="distDelete('${l.id}')">حذف</button>
         </td></tr>`).join('')}</table>` : '<div class="empty">لا توجد معملات بعد</div>'}
     </div>
+    <div id="dist-orphans"></div>
   </div>`;
   updateSyncBadge();
+  distScanOrphans();
 }
+
+/* فحص المعاملات السحابية الموجودة في السحابة بس ومش متسجلة في قايمة الموزّع — واستعادتها بكود جديد (إصلاح 2026-11-19) */
+async function distScanOrphans() {
+  const box = document.getElementById('dist-orphans');
+  if (!box) return;
+  if (!window.CLOUD || !CLOUD.ready || !CLOUD.fb) return;
+  try {
+    const snap = await CLOUD.fb.ref('csl/labs').once('value');
+    const all = snap.val() || {};
+    const known = new Set((META.labs || []).map(l => l.id));
+    const orphans = Object.keys(all).filter(id => !known.has(id) && all[id] && all[id].v);
+    if (!orphans.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="card" style="border-color:#f59e0b"><h3>⚠️ معملات سحابية مش متسجلة عندك</h3>
+      <div style="font-size:12px;color:var(--mut);margin-bottom:8px">دي معاملات بياناتها موجودة على السحابة بس اتمسح تسجيلها من القايمة — دوس «استعادة» عشان ترجعها بكود دخول جديد:</div>
+      ${orphans.map(id => { const nm = (all[id].v && all[id].v.lab && all[id].v.lab.name) || id; const pc = (all[id].v && all[id].v.patients) ? all[id].v.patients.length : 0; return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px dashed var(--line)">
+        <span style="font-weight:700;flex:1">🏥 ${esc(nm)} <span class="mut" style="font-size:11px">(${pc} مريض)</span></span>
+        <button class="btn btn-t btn-s" onclick="distRestoreOrphan('${id}')">استعادة + كود جديد</button>
+      </div>`; }).join('')}</div>`;
+  } catch (e) { /* نتعامل بهدوء — ممكن مفيش صلاحية أو نت ضعيف */ }
+}
+async function distRestoreOrphan(id) {
+  if (!window.CLOUD || !CLOUD.ready || !CLOUD.fb) return toast('⚠️ جاري الاتصال بالسحابة — استنى ثواني ودوس تاني');
+  toast('⏳ بجيب بيانات المعمل من السحابة…');
+  try {
+    const snap = await CLOUD.fb.ref('csl/labs/' + id).once('value');
+    const doc = snap.val();
+    if (!doc || !doc.v) return toast('⚠️ الميعاد السحابي فاضي');
+    const name = (doc.v.lab && doc.v.lab.name) || ('معمل ' + id);
+    const old = META.labs.find(l => l.id === id);
+    const code = (old && old.code) ? old.code : mkCode();
+    if (!old) META.labs.push({ id, name, code, active: true, casa: false, createdAt: today(), restoredAt: today() });
+    saveMeta();
+    if (typeof cloudSchedulePushLab === 'function') cloudSchedulePushLab(id, doc.v);
+    renderDistributor();
+    toast('✅ اتعاد تسجيل «' + name + '» — كود الدخول: ' + code);
+  } catch (e) { toast('⚠️ حصلت مشكلة في الاستعادة — جرّب تاني'); }
+}
+
 /* سحب بيانات الموزّع من السحابة يدوياً — بيدمج المعاملات بالـ id */
 async function distCloudPull() {
   if (!navigator.onLine) return toast('⚠️ مفيش نت على الجهاز');
@@ -344,6 +403,9 @@ function distCreate() {
   saveMeta();
   const fresh = seed(); fresh.lab.name = name;
   localStorage.setItem(labKey(id), JSON.stringify(fresh));
+  localStorage.setItem('csl_sync_' + id, new Date().toISOString());
+  /* نرفع المعمل الجديد للسحابة فوراً عشان يتفتح من أي جهاز (إصلاح 2026-11-19) */
+  if (typeof cloudSchedulePushLab === 'function') cloudSchedulePushLab(id, fresh);
   toast('✅ اتعمل معمل «' + name + '» — الكود: ' + META.labs[META.labs.length - 1].code);
   renderDistributor();
 }
