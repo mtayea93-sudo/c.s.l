@@ -9,7 +9,7 @@ jobs:
         run: |
           node <<'EOF'
           const https=require('https');
-          const cfg={apiKey:"AIzaSyAyKccEYlPnFglDQDApy6gG-jApwcKe4Ks",databaseURL:"https://sakrlab2026-default-rtdb.firebaseio.com",authDomain:"sakrlab2026.firebaseapp.com"};
+          const cfg={apiKey:"AIzaSyAPawpCwihRHOaPjMzhhcsSDa9WAy0Qx-Q",databaseURL:"https://sakrlab2026-default-rtdb.firebaseio.com",authDomain:"sakrlab2026.firebaseapp.com"};
           const post=(p,b)=>new Promise((res,rej)=>{const r=https.request({hostname:"identitytoolkit.googleapis.com",path:p,method:"POST",headers:{"Content-Type":"application/json","Content-Length":Buffer.byteLength(b)}},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(JSON.parse(d)))});r.on("error",rej);r.write(b);r.end()});
           const get=p=>new Promise((res,rej)=>{https.get({hostname:"sakrlab2026-default-rtdb.firebaseio.com",path:p+"?auth="+encodeURIComponent(IDTOKEN)},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(JSON.parse(d)))}).on("error",rej)});
           let IDTOKEN=null;
