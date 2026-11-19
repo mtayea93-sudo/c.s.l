@@ -2,10 +2,32 @@ name: csl-diagnostics
 on:
   workflow_dispatch:
 jobs:
-  diag:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Check CSL cloud data
+      - name: Read Firebase (no secrets printed)
         run: |
-          echo "aW1wb3J0IGpzb24sIHVybGxpYi5yZXF1ZXN0CktFWSA9ICJBSXphU3lBUGF3cEN3aWhSSE9hUGpNemhoY3NTRGE5V0F5MFF4LVEiCkRCID0gImh0dHBzOi8vc2FrcmxhYjIwMjYtZGVmYXVsdC1ydGRiLmZpcmViYXNlaW8uY29tIgpkZWYgcmVxKHVybCwgZGF0YT1Ob25lKToKICAgIHIgPSB1cmxsaWIucmVxdWVzdC5SZXF1ZXN0KHVybCwgZGF0YT1qc29uLmR1bXBzKGRhdGEpLmVuY29kZSgpIGlmIGRhdGEgZWxzZSBOb25lLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgaGVhZGVycz17IkNvbnRlbnQtVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24ifSkKICAgIHRyeToKICAgICAgICB3aXRoIHVybGxpYi5yZXF1ZXN0LnVybG9wZW4ociwgdGltZW91dD0zMCkgYXMgZjoKICAgICAgICAgICAgcmV0dXJuIGpzb24ubG9hZHMoZi5yZWFkKCkgb3IgYiJudWxsIikKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICByZXR1cm4geyJfX2VyciI6IHN0cihlKVs6MjAwXX0KdG9rID0gcmVxKGYiaHR0cHM6Ly9pZGVudGl0eXRvb2xraXQuZ29vZ2xlYXBpcy5jb20vdjEvYWNjb3VudHM6c2lnblVwP2tleT17S0VZfSIsIHsicmV0dXJuU2VjdXJlVG9rZW4iOiBUcnVlfSkKaWYgImlkVG9rZW4iIG5vdCBpbiB0b2s6CiAgICBwcmludCgiQVVUSF9GQUlMRUQiLCB0b2spOyByYWlzZSBTeXN0ZW1FeGl0KDApCnQgPSB0b2tbImlkVG9rZW4iXQpwcmludCgiQVVUSCBPSyIpCnJvb3QgPSByZXEoZiJ7REJ9Ly5qc29uP2F1dGg9e3R9JnNoYWxsb3c9dHJ1ZSIpCnByaW50KCJST09UIEtFWVM6IiwganNvbi5kdW1wcyhyb290LCBlbnN1cmVfYXNjaWk9RmFsc2UpWzoxMjAwXSkKY3NsID0gcmVxKGYie0RCfS9jc2wuanNvbj9hdXRoPXt0fSZzaGFsbG93PXRydWUiKQpwcmludCgiQ1NMIEtFWVM6IiwganNvbi5kdW1wcyhjc2wsIGVuc3VyZV9hc2NpaT1GYWxzZSlbOjYwMF0pCnNha3IgPSByZXEoZiJ7REJ9L3Nha3IuanNvbj9hdXRoPXt0fSZzaGFsbG93PXRydWUiKQpwcmludCgiU0FLUiBLRVlTOiIsIGpzb24uZHVtcHMoc2FrciwgZW5zdXJlX2FzY2lpPUZhbHNlKVs6NjAwXSkKdXNlcnMgPSByZXEoZiJ7REJ9L3VzZXJzLmpzb24/YXV0aD17dH0mc2hhbGxvdz10cnVlIikKaWYgaXNpbnN0YW5jZSh1c2VycywgZGljdCkgYW5kICJfX2VyciIgbm90IGluIHVzZXJzOgogICAgcHJpbnQoIlVTRVJTIENPVU5UOiIsIGxlbih1c2VycykpCmJvb2tpbmdzID0gcmVxKGYie0RCfS9ib29raW5ncy5qc29uP2F1dGg9e3R9JnNoYWxsb3c9dHJ1ZSIpCmlmIGlzaW5zdGFuY2UoYm9va2luZ3MsIGRpY3QpIGFuZCAiX19lcnIiIG5vdCBpbiBib29raW5nczoKICAgIHByaW50KCJCT09LSU5HUyBDT1VOVDoiLCBsZW4oYm9va2luZ3MpKQo=" | base64 -d > /tmp/diag.py
-          python3 /tmp/diag.py
+          node <<'EOF'
+          const https=require('https');
+          const cfg={apiKey:"AIzaSyAyKccEYlPnFglDQDApy6gG-jApwcKe4Ks",databaseURL:"https://sakrlab2026-default-rtdb.firebaseio.com",authDomain:"sakrlab2026.firebaseapp.com"};
+          const post=(p,b)=>new Promise((res,rej)=>{const r=https.request({hostname:"identitytoolkit.googleapis.com",path:p,method:"POST",headers:{"Content-Type":"application/json","Content-Length":Buffer.byteLength(b)}},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(JSON.parse(d)))});r.on("error",rej);r.write(b);r.end()});
+          const get=p=>new Promise((res,rej)=>{https.get({hostname:"sakrlab2026-default-rtdb.firebaseio.com",path:p+"?auth="+encodeURIComponent(IDTOKEN)},x=>{let d="";x.on("data",c=>d+=c);x.on("end",()=>res(JSON.parse(d)))}).on("error",rej)});
+          let IDTOKEN=null;
+          (async()=>{
+            const a=await post("/v1/accounts:signUp?key="+cfg.apiKey,JSON.stringify({returnSecureToken:true}));
+            if(a.error){console.log("AUTH ERR",a.error.message);process.exit(0)}
+            IDTOKEN=a.idToken;
+            const snap=await get("/csl.json");
+            console.log("ROOT KEYS:",JSON.stringify(Object.keys(snap||{})));
+            const meta=snap&&snap.meta;
+            if(!meta){console.log("NO META NODE");process.exit(0)}
+            console.log("META v:",meta.v,"at:",meta.at,"labsCount:",meta.labs?meta.labs.length:0);
+            (meta.labs||[]).forEach(l=>console.log("LAB:",l.id,"|",l.name,"| active:",l.active,"| patients:",l.casa?l.casa.patients:0,"| visits:",l.casa?l.casa.visits:0,"| payments:",l.casa?l.casa.payments:0,"| at:",l.at));
+            const labsNode=snap.labs||{};
+            console.log("LABS NODE IDS:",JSON.stringify(Object.keys(labsNode)));
+            for(const id of Object.keys(labsNode)){
+              const n=labsNode[id];
+              console.log("  labs/"+id,"v:",n&&n.v,"at:",n&&n.at,"(db size chars:",n&&n.db?JSON.stringify(n.db).length:0,")");
+            }
+          })().catch(e=>{console.log("ERR",e.message)});
+          EOF
