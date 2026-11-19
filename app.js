@@ -107,6 +107,7 @@ function route() {
   if (page === 'results') return renderResults();
   if (page === 'finance') return renderFinance();
   if (page === 'inventory') return renderInventory();
+  if (page === 'staff') return renderStaff();
   if (page === 'settings') return renderSettings();
   if (page === 'labops') return renderLabops(arg);
   renderHome();
@@ -506,6 +507,7 @@ function renderHome() {
     ['labops', 'المعمل', 'استقبال + نتائج + إعدادات (تحاليل/باراميترات/عينات) — بنظام CSL الكامل', '🏥', '#0b5bd3'],
     ['casa', 'CASA', casaOn ? 'تحليل السائل المنوي — مفعّل ✓ بيفتح على موقعنا casa.mtayea.com في تبويب جديد' : 'تحليل السائل المنوي — غير مفعّل للمعمل ده، هيُفتح موقع CASA عادي وتقدر تفعّله هناك', '🔬', '#0fa08c', 'https://casa.mtayea.com'],
     ['finance', 'الحسابات', 'الخزينة + بيان الوارد والمصروف + مديونية الشركات', '💰', '#e8a33d'],
+    ['staff', 'الموظفون', 'رواتب + شيفتات (صباحي/مسائي/سهر) + حاسبة ساعات الحضور + المستحق + القبض بأي عملة', '👥', '#2e7d32'],
     ['inventory', 'المخزن', 'المخزون والمستهلك والمتبقي وإنذار نقص المخزون', '📦', '#7a4fd0'],
     ['blood', 'بنك الدم', 'متبرعون + سجل تبرعات + «مطلوب متبرعون» — والحالات اللي عليها فصيلة دم بتتسجل هنا تلقائياً', '🩸', '#c0392b'],
     ['settings', 'الإعدادات', 'الأسعار والتحاليل واللوجو والترويسة وإعدادات الطباعة والمستخدمين والشركات', '⚙️', '#54627d'],
