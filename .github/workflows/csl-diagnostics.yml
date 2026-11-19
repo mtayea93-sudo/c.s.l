@@ -19,10 +19,10 @@ jobs:
             IDTOKEN=a.idToken;
             const snap=await get("/csl.json");
             console.log("ROOT KEYS:",JSON.stringify(Object.keys(snap||{})));
-            const meta=snap&&snap.meta;
+            const meta=snap&&snap.meta; const mv=meta&&meta.v;
             if(!meta){console.log("NO META NODE");process.exit(0)}
-            console.log("META v:",meta.v,"at:",meta.at,"labsCount:",meta.labs?meta.labs.length:0);
-            (meta.labs||[]).forEach(l=>console.log("LAB:",l.id,"|",l.name,"| active:",l.active,"| patients:",l.casa?l.casa.patients:0,"| visits:",l.casa?l.casa.visits:0,"| payments:",l.casa?l.casa.payments:0,"| at:",l.at));
+            console.log("META at:",meta.at,"labsCount:",mv&&Array.isArray(mv.labs)?mv.labs.length:-1,"superUser:",mv&&mv.superUser?"yes":"no");
+            (mv.labs||[]).forEach(l=>console.log("LAB:",l.id,"|",l.name,"| active:",l.active,"| at:",l.at));
             const labsNode=snap.labs||{};
             console.log("LABS NODE IDS:",JSON.stringify(Object.keys(labsNode)));
             for(const id of Object.keys(labsNode)){
