@@ -154,13 +154,16 @@
       const localRaw = localStorage.getItem((typeof labKey === 'function') ? labKey(labId) : ('csl_v1_' + labId));
       if (!localAt && localRaw) {
         /* الجهاز ده معمله محلي بس من غير طابع مزامنة:
-           لو فيه شغل حقيقي (مرضى/حجوزات/مدفوعات) ارفعه — لو دي نسخة seed فاضية السحابة تكسب */
-        let hasWork = false;
+           لو فيه شغل حقيقي (مرضى/حجوزات/مدفوعات) ارفعه —
+           لو دي نسخة seed فاضية أو معمل تجريبي السحابة تكسب (إصلاح 2026-11-19) */
+        let pushLocal = false;
         try {
           const ldb = JSON.parse(localRaw);
-          hasWork = !!(ldb && ((ldb.patients && ldb.patients.length) || (ldb.visits && ldb.visits.length) || (ldb.payments && ldb.payments.length)));
-        } catch (e) {}
-        if (hasWork) { cloudPushLab(); return; }
+          const hasWork = !!(ldb && ((ldb.patients && ldb.patients.length) || (ldb.visits && ldb.visits.length) || (ldb.payments && ldb.payments.length)));
+          const isDemo = !!(ldb && ldb.lab && /تجريبي|demo/i.test(String(ldb.lab.name || '')));
+          pushLocal = hasWork && !isDemo;
+        } catch (e) { pushLocal = false; }
+        if (pushLocal) { cloudPushLab(); return; }
       }
       if (localAt && doc.at && doc.at <= localAt) return; /* المحلي أحدث — هيترفع لوحده */
       /* السحابة أحدث → طبّقها */
@@ -209,6 +212,24 @@
     if (!CLOUD.ready || typeof META === 'undefined' || !META) return;
     const payload = JSON.stringify(META);
     if (payload === CLOUD.lastMetaApplied) return;
+    /* حماية (2026-11-19): جهاز فاضي ممنوع يمسح قائمة المعاملات السحابية — لو المحلي فاضي والسحابة فيها معاملات نسحب بدل ما نرفع */
+    if (!Array.isArray(META.labs) || META.labs.length === 0) {
+      try {
+        const gsnap = await CLOUD.fb.ref('csl/meta').once('value');
+        const gdoc = gsnap.val();
+        const gCount = (gdoc && gdoc.v && Array.isArray(gdoc.v.labs)) ? gdoc.v.labs.length : 0;
+        if (gCount > 0) {
+          updateSyncBadge('busy', '☁️ استرجاع بيانات الموزّع من السحابة…');
+          const gChanged = applyMetaRemote(gdoc.v);
+          if (gChanged) {
+            CLOUD.lastMetaApplied = JSON.stringify(META);
+            try { saveMeta(); } catch (e) {}
+            try { const s = session(); if (s && s.type === 'super') route(); } catch (e) {}
+          } else { updateSyncBadge('ok', '☁️ متزامن مع السحابة'); }
+          return;
+        }
+      } catch (e) { /* نكمل الرفع الطبيعي لو القراءة فشلت */ }
+    }
     updateSyncBadge('busy', '⏳ جاري رفع بيانات الموزّع…');
     const at = new Date().toISOString();
     try {
